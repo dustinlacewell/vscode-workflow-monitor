@@ -1,0 +1,51 @@
+name: Deploy site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      # The site bundles the extension's webview source as workspace deps
+      # (LogPreview imports from packages/extension/src/webview/...), so
+      # changes to those should rebuild the site too.
+      - "packages/site/**"
+      - "packages/extension/src/util/**"
+      - "packages/extension/src/webview/**"
+      - "packages/extension/src/domain/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/deploy-site.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter site build
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: packages/site/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
