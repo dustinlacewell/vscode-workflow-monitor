@@ -36,7 +36,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx @vscode/vsce package --no-dependencies --out .build
+      # Use our wrapper so .build/ is created as a directory before vsce
+      # writes into it — otherwise vsce treats a missing `--out` path as a
+      # filename and the artifact glob can't find .build/*.vsix.
+      - run: npm run package
       - uses: actions/upload-artifact@v4
         with:
           name: vsix
