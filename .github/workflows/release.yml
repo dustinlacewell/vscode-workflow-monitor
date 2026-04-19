@@ -41,7 +41,9 @@ jobs:
       - name: Locate VSIX
         id: vsix
         run: |
-          path=$(ls packages/extension/.build/*.vsix | head -n 1)
+          # Absolute path so subsequent `pnpm --filter ... exec` invocations
+          # (which cd into the package dir) still find the file.
+          path=$(realpath packages/extension/.build/*.vsix | head -n 1)
           echo "path=${path}" >> "$GITHUB_OUTPUT"
           echo "Built: ${path}"
 
