@@ -6,7 +6,7 @@
 import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -36,7 +36,14 @@ export function packageExtension() {
   return join(outDir, vsix);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Run packaging when this file is invoked directly (as `node bin/package-extension.mjs`
+// or via `npm run package`). Comparing `import.meta.url` to a URL derived from
+// `process.argv[1]` is fragile across path normalisations — a suffix match on
+// the script name is both simpler and robust. When install-extension.mjs
+// imports this module, process.argv[1] ends with install-extension.mjs, so
+// packaging does not auto-run at import time.
+const invokedDirectly = /[/\\]package-extension\.mjs$/.test(process.argv[1] ?? "");
+if (invokedDirectly) {
   const vsixPath = packageExtension();
   process.stdout.write(`\nPackaged: ${vsixPath}\n`);
 }
