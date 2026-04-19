@@ -1,0 +1,223 @@
+---
+/**
+ * Inline preview of the actual webview, mounted in a shadow root so its
+ * CSS can't leak into the surrounding site styles. Imports live straight
+ * from the extension source — a tweak to `styles.ts` or `controller.ts`
+ * updates both the shipped extension and this preview.
+ */
+import { STYLES } from "../../../extension/src/webview/styles";
+import snapshot from "../data/snapshot.json";
+---
+
+<div class="log-preview-frame">
+  <div class="vscode-tabs">
+    <div class="vscode-tab active">
+      <svg class="tab-icon" viewBox="0 0 16 16" aria-hidden="true">
+        <path fill="currentColor" d="M13.85 4.44l-3.28-3.3-.35-.14H2.5l-.5.5v13l.5.5h11l.5-.5V4.8l-.15-.36zM13 5h-3V2l3 3zM3 14V2h6v3.5l.5.5H13v8H3z"/>
+        <path fill="currentColor" d="M4.5 8h6v1h-6zm0 2h6v1h-6zm0 2h4v1h-4zm0-6h3v1h-3z"/>
+      </svg>
+      <span class="tab-label">{snapshot.header.jobName} · #{snapshot.header.runNumber}</span>
+      <button class="tab-close" aria-label="Close tab">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+          <path fill="currentColor" d="M8 8.707l3.646 3.647.708-.708L8.707 8l3.647-3.646-.708-.708L8 7.293 4.354 3.646l-.708.708L7.293 8l-3.647 3.646.708.708L8 8.707z"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+  <div id="log-preview-host" class="log-preview-host"></div>
+</div>
+
+<style>
+  .log-preview-frame {
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #2b2b2b;
+    background: #1e1e1e;
+    box-shadow: 0 30px 60px -20px rgba(0, 0, 0, 0.5);
+  }
+
+  /* VS Code editor tab strip — inactive container behind the active tab.
+     The thin darker line under the strip is the separator VS Code draws
+     between the tabs and the editor body. */
+  .vscode-tabs {
+    display: flex;
+    height: 35px;
+    background: #252526;
+    border-bottom: 1px solid #181818;
+    box-shadow: 0 1px 0 0 rgba(0, 0, 0, 0.35);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI",
+      "HelveticaNeue-Light", "Ubuntu", "Droid Sans", sans-serif;
+    font-size: 13px;
+    user-select: none;
+  }
+
+  .vscode-tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 10px 0 12px;
+    position: relative;
+    height: 100%;
+    background: #2d2d2d;
+    color: rgba(255, 255, 255, 0.5);
+    border-right: 1px solid #252526;
+    max-width: 280px;
+  }
+
+  .vscode-tab.active {
+    background: #1e1e1e;
+    color: #ffffff;
+  }
+
+  /* The blue "active indicator" line VS Code draws across the top of the
+     selected tab. */
+  .vscode-tab.active::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    background: #0078d4;
+  }
+
+  .vscode-tab .tab-icon {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    color: #519aba; /* VS Code's "plain text file" icon color */
+  }
+
+  .vscode-tab .tab-label {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .vscode-tab .tab-close {
+    background: transparent;
+    border: 0;
+    padding: 3px;
+    margin-left: 4px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: inherit;
+    opacity: 0.75;
+    cursor: pointer;
+  }
+
+  .vscode-tab .tab-close:hover {
+    background: rgba(255, 255, 255, 0.08);
+    opacity: 1;
+  }
+
+  .log-preview-host { height: 640px; }
+</style>
+
+{/*
+  Runs before the module script; must set up `acquireVsCodeApi` and hand the
+  snapshot to the module script via a global, because module scripts load
+  after inline ones.
+*/}
+<script is:inline define:vars={{ snapshot, stylesCss: STYLES }}>
+  // A no-op VS Code bridge — copy/copy-failure buttons in the preview are
+  // intentionally inert. `openExternal` could be wired to window.open later.
+  window.acquireVsCodeApi = () => ({
+    postMessage: () => {},
+    setState: () => {},
+    getState: () => null,
+  });
+  window.__LOG_PREVIEW__ = { snapshot, stylesCss };
+</script>
+
+<script>
+  // The controller runs against the shadow root so the webview's CSS (which
+  // targets `html, body`, `#app`, etc.) doesn't bleed out onto the page.
+  import { mount } from "../../../extension/src/webview/controller.ts";
+
+  type PreviewGlobals = {
+    snapshot: unknown;
+    stylesCss: string;
+  };
+
+  const { snapshot, stylesCss } = (window as unknown as { __LOG_PREVIEW__: PreviewGlobals })
+    .__LOG_PREVIEW__;
+
+  const host = document.getElementById("log-preview-host");
+  if (host) {
+    const shadow = host.attachShadow({ mode: "open" });
+    shadow.innerHTML = `
+      <style>
+        /* Defaults for the --vscode-* tokens the webview reads. Values picked
+           to match VS Code Dark+ (the default dark theme) so the preview
+           looks like the real editor rather than a generic "dark UI". */
+        :host {
+          display: block;
+          height: 100%;
+
+          --vscode-foreground: #cccccc;
+          --vscode-editor-background: #1e1e1e;
+          --vscode-editor-foreground: #d4d4d4;
+          --vscode-sideBar-background: #252526;
+
+          --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "HelveticaNeue-Light", "Ubuntu", "Droid Sans", sans-serif;
+          --vscode-font-size: 13px;
+          --vscode-editor-font-family: "Menlo", "Monaco", "Courier New", monospace;
+          --vscode-editor-font-size: 13px;
+
+          --vscode-panel-border: #80808059;
+          --vscode-descriptionForeground: #cccccc99;
+          --vscode-list-hoverBackground: #2a2d2e;
+          --vscode-button-secondaryBackground: #3a3d41;
+          --vscode-button-secondaryHoverBackground: #45494e;
+
+          --vscode-errorForeground: #f48771;
+          --vscode-editorError-foreground: #f48771;
+          --vscode-editorWarning-foreground: #cca700;
+          --vscode-editorInfo-foreground: #75beff;
+          --vscode-testing-iconPassed: #73c991;
+          --vscode-progressBar-background: #0078d4;
+
+          --vscode-terminal-ansiBlack: #000000;
+          --vscode-terminal-ansiRed: #cd3131;
+          --vscode-terminal-ansiGreen: #0dbc79;
+          --vscode-terminal-ansiYellow: #e5e510;
+          --vscode-terminal-ansiBlue: #2472c8;
+          --vscode-terminal-ansiMagenta: #bc3fbc;
+          --vscode-terminal-ansiCyan: #11a8cd;
+          --vscode-terminal-ansiWhite: #e5e5e5;
+          --vscode-terminal-ansiBrightBlack: #666666;
+          --vscode-terminal-ansiBrightRed: #f14c4c;
+          --vscode-terminal-ansiBrightGreen: #23d18b;
+          --vscode-terminal-ansiBrightYellow: #f5f543;
+          --vscode-terminal-ansiBrightBlue: #3b8eea;
+          --vscode-terminal-ansiBrightMagenta: #d670d6;
+          --vscode-terminal-ansiBrightCyan: #29b8db;
+          --vscode-terminal-ansiBrightWhite: #e5e5e5;
+        }
+        ${stylesCss}
+      </style>
+      <div id="app">
+        <header class="header"></header>
+        <main id="sections"></main>
+        <footer></footer>
+      </div>
+    `;
+
+    mount(shadow);
+
+    // Kick the controller with the real-log snapshot. Have to defer the
+    // dispatch by a microtask so the `message` listener the controller just
+    // attached on `window` is in place before we fire.
+    queueMicrotask(() => {
+      window.postMessage({ type: "snapshot", snapshot }, "*");
+      // After the snapshot is applied, simulate clicking "Fold passing" so
+      // the preview opens with the failing section visible — same behavior
+      // as a user landing on a failed run in the real extension.
+      setTimeout(() => {
+        const btn = shadow.querySelector('[data-action="fold-passing"]') as HTMLButtonElement | null;
+        btn?.click();
+      }, 0);
+    });
+  }
+</script>

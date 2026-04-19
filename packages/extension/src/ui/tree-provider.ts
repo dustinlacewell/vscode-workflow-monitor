@@ -56,7 +56,7 @@ export class WorkflowsTreeProvider implements vscode.TreeDataProvider<TreeNode>,
           "Sign in to GitHub to load workflows",
           "sign-in",
           snap.errorMessage ?? undefined,
-          { command: "githubActionsMonitor.signIn", title: "Sign in to GitHub" },
+          { command: "workflowMonitor.signIn", title: "Sign in to GitHub" },
         )];
       case "error":
         return [new MessageNode(`Error: ${snap.errorMessage ?? "unknown"}`, "error")];
@@ -81,14 +81,14 @@ export class WorkflowsTreeProvider implements vscode.TreeDataProvider<TreeNode>,
         `Filtering to branch: ${snap.branch}`,
         "git-branch",
         "Click to toggle to all branches",
-        { command: "githubActionsMonitor.toggleBranchFilter", title: "Toggle branch filter" },
+        { command: "workflowMonitor.toggleBranchFilter", title: "Toggle branch filter" },
       ));
     } else if (this.viewState.state.branchFilter === "all" && snap.branch) {
       nodes.unshift(new MessageNode(
         `Showing all branches`,
         "list-unordered",
         `Click to filter to ${snap.branch}`,
-        { command: "githubActionsMonitor.toggleBranchFilter", title: "Toggle branch filter" },
+        { command: "workflowMonitor.toggleBranchFilter", title: "Toggle branch filter" },
       ));
     }
     return nodes;

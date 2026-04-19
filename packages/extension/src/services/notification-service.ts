@@ -94,7 +94,7 @@ export class NotificationService implements vscode.Disposable {
             if (choice === openAction) void vscode.env.openExternal(vscode.Uri.parse(run.htmlUrl));
             else if (choice === copyFailure && failingJobCtx) {
               // Delegate to the existing command so we stay DRY.
-              void vscode.commands.executeCommand("githubActionsMonitor.copyFailureContextForJob", failingJobCtx.job.id, failingJobCtx.run.id);
+              void vscode.commands.executeCommand("workflowMonitor.copyFailureContextForJob", failingJobCtx.job.id, failingJobCtx.run.id);
             }
           });
         }

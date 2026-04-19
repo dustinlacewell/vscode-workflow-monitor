@@ -6,6 +6,7 @@ bin/**
 .gitignore
 esbuild.mjs
 tsconfig.json
+tsconfig.webview.json
 **/*.map
 **/*.ts
 node_modules/**

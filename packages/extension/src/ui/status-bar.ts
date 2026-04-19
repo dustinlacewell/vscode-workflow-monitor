@@ -23,7 +23,7 @@ export class StatusBar implements vscode.Disposable {
 
   constructor(private readonly store: WorkflowStore, enabled: boolean) {
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-    this.item.command = "githubActionsMonitor.openInBrowser";
+    this.item.command = "workflowMonitor.openInBrowser";
     this.enabled = enabled;
     this.subscription = store.onDidChange((snap) => this.render(snap));
     this.render(store.snapshot());

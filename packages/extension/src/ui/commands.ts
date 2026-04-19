@@ -12,7 +12,7 @@ import type { WorkflowDefinitionService } from "../services/workflow-definitions
 import type { WorkflowStore } from "../services/workflow-store.js";
 import type { LiveSync } from "../services/live-sync.js";
 import type { Logger } from "../util/logger.js";
-import { openLogDocument } from "./log-document-provider.js";
+import type { LogWebviewService } from "./log-webview-panel.js";
 import { promptDispatchInputs } from "./prompts.js";
 import { JobNode, RunNode, StepNode, WorkflowNode } from "./tree-items.js";
 
@@ -30,6 +30,7 @@ export interface CommandDeps {
   readonly store: WorkflowStore;
   readonly sync: LiveSync;
   readonly logs: LogService;
+  readonly logPanels: LogWebviewService;
   readonly artifacts: ArtifactService;
   readonly definitions: WorkflowDefinitionService;
   readonly diagnostics: DiagnosticsService;
@@ -63,14 +64,14 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable {
 function navCommands({ store }: CommandDeps): CommandDef[] {
   return [
     {
-      id: "githubActionsMonitor.openUrl",
+      id: "workflowMonitor.openUrl",
       handler: (url: unknown) => {
         if (typeof url !== "string" || url.length === 0) return;
         void vscode.env.openExternal(vscode.Uri.parse(url));
       },
     },
     {
-      id: "githubActionsMonitor.openInBrowser",
+      id: "workflowMonitor.openInBrowser",
       handler: (node: unknown) => {
         const url = pickNodeUrl(node, store);
         if (url) void vscode.env.openExternal(vscode.Uri.parse(url));
@@ -84,7 +85,7 @@ function navCommands({ store }: CommandDeps): CommandDef[] {
 function authCommands({ auth }: CommandDeps): CommandDef[] {
   return [
     {
-      id: "githubActionsMonitor.signIn",
+      id: "workflowMonitor.signIn",
       handler: async () => {
         const state = await auth.signIn();
         if (!state.session) vscode.window.showWarningMessage("GitHub sign-in was cancelled.");
@@ -99,11 +100,11 @@ function runCommands(deps: CommandDeps): CommandDef[] {
   const { sync } = deps;
   return [
     {
-      id: "githubActionsMonitor.refresh",
+      id: "workflowMonitor.refresh",
       handler: () => sync.refresh(),
     },
     {
-      id: "githubActionsMonitor.rerunWorkflow",
+      id: "workflowMonitor.rerunWorkflow",
       handler: (node: unknown) => guardRun(deps, node, async (api, repo, run) => {
         await api.rerunWorkflow(repo, run.id);
         vscode.window.showInformationMessage(`Re-running #${run.runNumber}…`);
@@ -111,7 +112,7 @@ function runCommands(deps: CommandDeps): CommandDef[] {
       }),
     },
     {
-      id: "githubActionsMonitor.rerunFailedJobs",
+      id: "workflowMonitor.rerunFailedJobs",
       handler: (node: unknown) => guardRun(deps, node, async (api, repo, run) => {
         await api.rerunFailedJobs(repo, run.id);
         vscode.window.showInformationMessage(`Re-running failed jobs in #${run.runNumber}…`);
@@ -119,7 +120,7 @@ function runCommands(deps: CommandDeps): CommandDef[] {
       }),
     },
     {
-      id: "githubActionsMonitor.cancelRun",
+      id: "workflowMonitor.cancelRun",
       handler: async (node: unknown) => {
         if (!(node instanceof RunNode)) return;
         const confirm = await vscode.window.showWarningMessage(
@@ -142,7 +143,7 @@ function runCommands(deps: CommandDeps): CommandDef[] {
 function dispatchCommands(deps: CommandDeps): CommandDef[] {
   return [
     {
-      id: "githubActionsMonitor.dispatchWorkflow",
+      id: "workflowMonitor.dispatchWorkflow",
       handler: async (node: unknown) => {
         if (!(node instanceof WorkflowNode)) return;
         const repo = deps.store.snapshot().repo;
@@ -174,7 +175,7 @@ function dispatchCommands(deps: CommandDeps): CommandDef[] {
 function artifactCommands(deps: CommandDeps): CommandDef[] {
   return [
     {
-      id: "githubActionsMonitor.showArtifacts",
+      id: "workflowMonitor.showArtifacts",
       handler: (node: unknown) => guardRun(deps, node, async (api, repo, run) => {
         const artifacts = await api.listArtifacts(repo, run.id);
         if (artifacts.length === 0) { vscode.window.showInformationMessage(`Run #${run.runNumber} has no artifacts.`); return; }
@@ -201,7 +202,7 @@ function artifactCommands(deps: CommandDeps): CommandDef[] {
 function diagnosticsCommands(deps: CommandDeps): CommandDef[] {
   return [
     {
-      id: "githubActionsMonitor.clearDiagnostics",
+      id: "workflowMonitor.clearDiagnostics",
       handler: () => { deps.diagnostics.clear(); },
     },
   ];
@@ -212,15 +213,15 @@ function diagnosticsCommands(deps: CommandDeps): CommandDef[] {
 function viewCommands({ viewState }: CommandDeps): CommandDef[] {
   return [
     {
-      id: "githubActionsMonitor.toggleBranchFilter",
+      id: "workflowMonitor.toggleBranchFilter",
       handler: () => viewState.toggleBranchFilter(),
     },
     {
-      id: "githubActionsMonitor.showAllBranches",
+      id: "workflowMonitor.showAllBranches",
       handler: () => viewState.setBranchFilter("all"),
     },
     {
-      id: "githubActionsMonitor.showCurrentBranchOnly",
+      id: "workflowMonitor.showCurrentBranchOnly",
       handler: () => viewState.setBranchFilter("current"),
     },
   ];
@@ -232,13 +233,14 @@ function logCommands(deps: CommandDeps): CommandDef[] {
   const { logs } = deps;
   return [
     {
-      id: "githubActionsMonitor.viewJobLog",
+      id: "workflowMonitor.viewJobLog",
       handler: (node: unknown) => guardJob(deps, node, async (_api, repo, ctx) => {
-        await openLogDocument(repo, ctx);
+        const step = node instanceof StepNode ? node.step : null;
+        deps.logPanels.show(repo, ctx, { focusStep: step, foldOthers: true });
       }),
     },
     {
-      id: "githubActionsMonitor.copyJobLog",
+      id: "workflowMonitor.copyJobLog",
       handler: (node: unknown) => guardJob(deps, node, async (_api, repo, ctx) => {
         const text = await logs.getJobLog(repo, ctx.job);
         await vscode.env.clipboard.writeText(text);
@@ -246,7 +248,7 @@ function logCommands(deps: CommandDeps): CommandDef[] {
       }),
     },
     {
-      id: "githubActionsMonitor.copyFailureContext",
+      id: "workflowMonitor.copyFailureContext",
       handler: async (node: unknown) => {
         const jobs = collectFailingJobs(deps.store, node);
         if (jobs.length === 0) { vscode.window.showInformationMessage("Nothing failed here."); return; }
@@ -271,7 +273,7 @@ function logCommands(deps: CommandDeps): CommandDef[] {
     {
       // Programmatic entry point so non-tree callers (e.g. notifications)
       // can trigger "copy failure context" with bare IDs.
-      id: "githubActionsMonitor.copyFailureContextForJob",
+      id: "workflowMonitor.copyFailureContextForJob",
       handler: async (jobId: unknown, runId: unknown) => {
         if (typeof jobId !== "number" || typeof runId !== "number") return;
         const ctx = deps.store.resolveJob(runId, jobId);

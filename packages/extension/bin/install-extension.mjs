@@ -6,19 +6,44 @@
  * Requires the VS Code CLI (`code`) on PATH. In VS Code:
  *   Cmd/Ctrl-Shift-P → "Shell Command: Install 'code' command in PATH".
  */
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import { packageExtension } from "./package-extension.mjs";
 
 const vsixPath = packageExtension();
-const cmd = `code --install-extension "${vsixPath}" --force`;
+const cli = resolveCodeCli();
 
 try {
-  process.stdout.write(`\n> ${cmd}\n`);
-  execSync(cmd, { stdio: "inherit" });
+  process.stdout.write(`\n> ${cli} --install-extension "${vsixPath}" --force\n`);
+  execFileSync(cli, ["--install-extension", vsixPath, "--force"], { stdio: "inherit" });
 } catch {
-  process.stderr.write(`\nFailed to run 'code --install-extension'. Ensure the VS Code CLI is on PATH.\n`);
+  process.stderr.write(`\nFailed to run the VS Code CLI.\n`);
   process.stderr.write(`The built package is at: ${vsixPath}\n`);
   process.exit(1);
 }
 
 process.stdout.write(`\nInstalled ${vsixPath}\n`);
+
+/**
+ * On Windows, bare `code` on PATH often resolves to `Code.exe` (the GUI
+ * launcher) instead of the CLI — `--install-extension` is silently rejected.
+ * Prefer `code.cmd` from the same install directory, falling back to PATH.
+ */
+function resolveCodeCli() {
+  if (process.platform !== "win32") return "code";
+  const pathDirs = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
+  for (const dir of pathDirs) {
+    const cmd = join(dir, "code.cmd");
+    if (existsSync(cmd)) return cmd;
+    // VS Code's bin dir sits next to the exe; if the exe is on PATH, look beside it.
+    const exeBin = join(dir, "bin", "code.cmd");
+    if (existsSync(exeBin)) return exeBin;
+  }
+  try {
+    const where = execSync("where code.cmd", { stdio: ["ignore", "pipe", "ignore"] })
+      .toString().split(/\r?\n/).find((l) => l.trim().length > 0);
+    if (where) return where.trim();
+  } catch { /* fall through */ }
+  return "code";
+}

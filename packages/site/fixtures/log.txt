@@ -1,0 +1,218 @@
+﻿2026-04-19T06:23:01.5623868Z Current runner version: '2.333.1'
+2026-04-19T06:23:01.5648454Z ##[group]Runner Image Provisioner
+2026-04-19T06:23:01.5649275Z Hosted Compute Agent
+2026-04-19T06:23:01.5649896Z Version: 20260213.493
+2026-04-19T06:23:01.5650461Z Commit: 5c115507f6dd24b8de37d8bbe0bb4509d0cc0fa3
+2026-04-19T06:23:01.5651184Z Build Date: 2026-02-13T00:28:41Z
+2026-04-19T06:23:01.5651820Z Worker ID: {53465602-7f75-4997-9779-e2066a1ad694}
+2026-04-19T06:23:01.5652498Z Azure Region: westus3
+2026-04-19T06:23:01.5653034Z ##[endgroup]
+2026-04-19T06:23:01.5654506Z ##[group]Operating System
+2026-04-19T06:23:01.5655088Z Ubuntu
+2026-04-19T06:23:01.5655591Z 24.04.4
+2026-04-19T06:23:01.5656081Z LTS
+2026-04-19T06:23:01.5656515Z ##[endgroup]
+2026-04-19T06:23:01.5657012Z ##[group]Runner Image
+2026-04-19T06:23:01.5657749Z Image: ubuntu-24.04
+2026-04-19T06:23:01.5658350Z Version: 20260413.86.1
+2026-04-19T06:23:01.5659536Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260413.86/images/ubuntu/Ubuntu2404-Readme.md
+2026-04-19T06:23:01.5660998Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260413.86
+2026-04-19T06:23:01.5661900Z ##[endgroup]
+2026-04-19T06:23:01.5663004Z ##[group]GITHUB_TOKEN Permissions
+2026-04-19T06:23:01.5665137Z Contents: read
+2026-04-19T06:23:01.5665669Z Metadata: read
+2026-04-19T06:23:01.5666273Z Packages: read
+2026-04-19T06:23:01.5666738Z ##[endgroup]
+2026-04-19T06:23:01.5669424Z Secret source: Actions
+2026-04-19T06:23:01.5670241Z Prepare workflow directory
+2026-04-19T06:23:01.6023528Z Prepare all required actions
+2026-04-19T06:23:01.6061892Z Getting action download info
+2026-04-19T06:23:02.0468800Z Download action repository 'actions/checkout@v4' (SHA:34e114876b0b11c390a56381ad16ebd13914f8d5)
+2026-04-19T06:23:02.1946992Z Download action repository 'actions/setup-node@v4' (SHA:49933ea5288caeca8642d1e84afbd3f7d6820020)
+2026-04-19T06:23:02.2800334Z Download action repository 'actions/upload-artifact@v4' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+2026-04-19T06:23:02.4928611Z Complete job name: Package VSIX
+2026-04-19T06:23:02.5663381Z ##[group]Run actions/checkout@v4
+2026-04-19T06:23:02.5664223Z with:
+2026-04-19T06:23:02.5664688Z   repository: dustinlacewell/vscode-workflow-monitor
+2026-04-19T06:23:02.5665455Z   token: ***
+2026-04-19T06:23:02.5665837Z   ssh-strict: true
+2026-04-19T06:23:02.5666217Z   ssh-user: git
+2026-04-19T06:23:02.5666605Z   persist-credentials: true
+2026-04-19T06:23:02.5667049Z   clean: true
+2026-04-19T06:23:02.5667668Z   sparse-checkout-cone-mode: true
+2026-04-19T06:23:02.5668154Z   fetch-depth: 1
+2026-04-19T06:23:02.5668536Z   fetch-tags: false
+2026-04-19T06:23:02.5668927Z   show-progress: true
+2026-04-19T06:23:02.5669317Z   lfs: false
+2026-04-19T06:23:02.5669683Z   submodules: false
+2026-04-19T06:23:02.5670076Z   set-safe-directory: true
+2026-04-19T06:23:02.5670781Z ##[endgroup]
+2026-04-19T06:23:02.6941524Z Syncing repository: dustinlacewell/vscode-workflow-monitor
+2026-04-19T06:23:02.6943416Z ##[group]Getting Git version info
+2026-04-19T06:23:02.6944311Z Working directory is '/home/runner/work/vscode-workflow-monitor/vscode-workflow-monitor'
+2026-04-19T06:23:02.6945401Z [command]/usr/bin/git version
+2026-04-19T06:23:02.6982762Z git version 2.53.0
+2026-04-19T06:23:02.7010712Z ##[endgroup]
+2026-04-19T06:23:02.7027898Z Temporarily overriding HOME='/home/runner/work/_temp/b511257a-7900-48ed-8867-a3aea7297d35' before making global git config changes
+2026-04-19T06:23:02.7030256Z Adding repository directory to the temporary git global config as a safe directory
+2026-04-19T06:23:02.7043511Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/vscode-workflow-monitor/vscode-workflow-monitor
+2026-04-19T06:23:02.7078650Z Deleting the contents of '/home/runner/work/vscode-workflow-monitor/vscode-workflow-monitor'
+2026-04-19T06:23:02.7082554Z ##[group]Initializing the repository
+2026-04-19T06:23:02.7087967Z [command]/usr/bin/git init /home/runner/work/vscode-workflow-monitor/vscode-workflow-monitor
+2026-04-19T06:23:02.7170833Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-04-19T06:23:02.7172983Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-04-19T06:23:02.7174569Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-04-19T06:23:02.7175810Z hint: call:
+2026-04-19T06:23:02.7176443Z hint:
+2026-04-19T06:23:02.7177549Z hint: 	git config --global init.defaultBranch <name>
+2026-04-19T06:23:02.7178600Z hint:
+2026-04-19T06:23:02.7179546Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-04-19T06:23:02.7181032Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-04-19T06:23:02.7182188Z hint:
+2026-04-19T06:23:02.7182854Z hint: 	git branch -m <name>
+2026-04-19T06:23:02.7183653Z hint:
+2026-04-19T06:23:02.7184697Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-04-19T06:23:02.7186764Z Initialized empty Git repository in /home/runner/work/vscode-workflow-monitor/vscode-workflow-monitor/.git/
+2026-04-19T06:23:02.7190249Z [command]/usr/bin/git remote add origin https://github.com/dustinlacewell/vscode-workflow-monitor
+2026-04-19T06:23:02.7218808Z ##[endgroup]
+2026-04-19T06:23:02.7220002Z ##[group]Disabling automatic garbage collection
+2026-04-19T06:23:02.7223939Z [command]/usr/bin/git config --local gc.auto 0
+2026-04-19T06:23:02.7253584Z ##[endgroup]
+2026-04-19T06:23:02.7254767Z ##[group]Setting up auth
+2026-04-19T06:23:02.7261413Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-04-19T06:23:02.7292689Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-04-19T06:23:02.7573800Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-04-19T06:23:02.7603696Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-04-19T06:23:02.7824838Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-04-19T06:23:02.7855022Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-04-19T06:23:02.8094645Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-04-19T06:23:02.8132709Z ##[endgroup]
+2026-04-19T06:23:02.8133957Z ##[group]Fetching the repository
+2026-04-19T06:23:02.8143302Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +fe03b00268580bce84de47485447938689bf0729:refs/remotes/origin/main
+2026-04-19T06:23:03.2678209Z From https://github.com/dustinlacewell/vscode-workflow-monitor
+2026-04-19T06:23:03.2680501Z  * [new ref]         fe03b00268580bce84de47485447938689bf0729 -> origin/main
+2026-04-19T06:23:03.2709017Z ##[endgroup]
+2026-04-19T06:23:03.2710340Z ##[group]Determining the checkout info
+2026-04-19T06:23:03.2712535Z ##[endgroup]
+2026-04-19T06:23:03.2716996Z [command]/usr/bin/git sparse-checkout disable
+2026-04-19T06:23:03.2759224Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-04-19T06:23:03.2787793Z ##[group]Checking out the ref
+2026-04-19T06:23:03.2793425Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2026-04-19T06:23:03.2870625Z Switched to a new branch 'main'
+2026-04-19T06:23:03.2873297Z branch 'main' set up to track 'origin/main'.
+2026-04-19T06:23:03.2880366Z ##[endgroup]
+2026-04-19T06:23:03.2917852Z [command]/usr/bin/git log -1 --format=%H
+2026-04-19T06:23:03.2940445Z fe03b00268580bce84de47485447938689bf0729
+2026-04-19T06:23:03.3277973Z ##[group]Run actions/setup-node@v4
+2026-04-19T06:23:03.3279214Z with:
+2026-04-19T06:23:03.3280043Z   node-version: 22
+2026-04-19T06:23:03.3280951Z   cache: npm
+2026-04-19T06:23:03.3281821Z   always-auth: false
+2026-04-19T06:23:03.3282993Z   check-latest: false
+2026-04-19T06:23:03.3284237Z   token: ***
+2026-04-19T06:23:03.3285081Z ##[endgroup]
+2026-04-19T06:23:03.5096898Z Found in cache @ /opt/hostedtoolcache/node/22.22.2/x64
+2026-04-19T06:23:03.5103631Z ##[group]Environment details
+2026-04-19T06:23:06.4917605Z node: v22.22.2
+2026-04-19T06:23:06.4918505Z npm: 10.9.7
+2026-04-19T06:23:06.4918833Z yarn: 1.22.22
+2026-04-19T06:23:06.4919776Z ##[endgroup]
+2026-04-19T06:23:06.4938910Z [command]/opt/hostedtoolcache/node/22.22.2/x64/bin/npm config get cache
+2026-04-19T06:23:06.6738660Z /home/runner/.npm
+2026-04-19T06:23:06.9116371Z Cache hit for: node-cache-Linux-x64-npm-553cbf21305df2ca5738caa977eaf09b7b342b4c6c5326f09283bccc1b4d511a
+2026-04-19T06:23:08.1329848Z Received 12582912 of 29118206 (43.2%), 12.0 MBs/sec
+2026-04-19T06:23:08.3158901Z Received 29118206 of 29118206 (100.0%), 23.5 MBs/sec
+2026-04-19T06:23:08.3159663Z Cache Size: ~28 MB (29118206 B)
+2026-04-19T06:23:08.3189759Z [command]/usr/bin/tar -xf /home/runner/work/_temp/f793ea2a-007a-4adf-9a88-3db27947acfb/cache.tzst -P -C /home/runner/work/vscode-workflow-monitor/vscode-workflow-monitor --use-compress-program unzstd
+2026-04-19T06:23:08.4185395Z Cache restored successfully
+2026-04-19T06:23:08.4204511Z Cache restored from key: node-cache-Linux-x64-npm-553cbf21305df2ca5738caa977eaf09b7b342b4c6c5326f09283bccc1b4d511a
+2026-04-19T06:23:08.4360802Z ##[group]Run npm ci
+2026-04-19T06:23:08.4361147Z [36;1mnpm ci[0m
+2026-04-19T06:23:08.4394151Z shell: /usr/bin/bash -e {0}
+2026-04-19T06:23:08.4394429Z ##[endgroup]
+2026-04-19T06:23:10.8940751Z npm warn deprecated whatwg-encoding@3.1.1: Use @exodus/bytes instead for a more spec-conformant and faster implementation
+2026-04-19T06:23:10.9578828Z npm warn deprecated prebuild-install@7.1.3: No longer maintained. Please contact the author of the relevant native addon; alternatives are available.
+2026-04-19T06:23:11.7352661Z npm warn deprecated glob@11.1.0: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+2026-04-19T06:23:14.6906850Z 
+2026-04-19T06:23:14.6907846Z added 324 packages, and audited 325 packages in 6s
+2026-04-19T06:23:14.6908319Z 
+2026-04-19T06:23:14.6908688Z 87 packages are looking for funding
+2026-04-19T06:23:14.6909162Z   run `npm fund` for details
+2026-04-19T06:23:14.6963669Z 
+2026-04-19T06:23:14.6977977Z 1 moderate severity vulnerability
+2026-04-19T06:23:14.6985240Z 
+2026-04-19T06:23:14.6985934Z To address all issues (including breaking changes), run:
+2026-04-19T06:23:14.6986866Z   npm audit fix --force
+2026-04-19T06:23:14.6987624Z 
+2026-04-19T06:23:14.6988066Z Run `npm audit` for details.
+2026-04-19T06:23:14.7613958Z ##[group]Run npm run package
+2026-04-19T06:23:14.7614274Z [36;1mnpm run package[0m
+2026-04-19T06:23:14.7641114Z shell: /usr/bin/bash -e {0}
+2026-04-19T06:23:14.7641378Z ##[endgroup]
+2026-04-19T06:23:14.8666532Z 
+2026-04-19T06:23:14.8669137Z > github-actions-monitor@0.1.0 package
+2026-04-19T06:23:14.8670094Z > node bin/package-extension.mjs
+2026-04-19T06:23:14.8670611Z 
+2026-04-19T06:23:14.9004401Z 
+2026-04-19T06:23:14.9005345Z > node esbuild.mjs --production
+2026-04-19T06:23:15.0154370Z 
+2026-04-19T06:23:15.0155215Z   dist/extension.js  259.5kb
+2026-04-19T06:23:15.0155594Z 
+2026-04-19T06:23:15.0156091Z ⚡ Done in 43ms
+2026-04-19T06:23:15.0215833Z 
+2026-04-19T06:23:15.0217826Z > /home/runner/work/vscode-workflow-monitor/vscode-workflow-monitor/node_modules/.bin/vsce package --no-dependencies --out /home/runner/work/vscode-workflow-monitor/vscode-workflow-monitor/.build
+2026-04-19T06:23:15.4867850Z Executing prepublish script 'npm run vscode:prepublish'...
+2026-04-19T06:23:15.5892129Z 
+2026-04-19T06:23:15.5892990Z > github-actions-monitor@0.1.0 vscode:prepublish
+2026-04-19T06:23:15.5893636Z > node esbuild.mjs --production
+2026-04-19T06:23:15.5893915Z 
+2026-04-19T06:23:15.6995451Z 
+2026-04-19T06:23:15.6996029Z   dist/extension.js  259.5kb
+2026-04-19T06:23:15.6997317Z 
+2026-04-19T06:23:15.6998040Z ⚡ Done in 47ms
+2026-04-19T06:23:15.7703467Z ##[warning]A 'repository' field is missing from the 'package.json' manifest file.
+Use --allow-missing-repository to bypass.
+2026-04-19T06:23:15.7712017Z ##[warning]LICENSE, LICENSE.md, or LICENSE.txt not found
+2026-04-19T06:23:15.7748367Z Files included in the VSIX:
+2026-04-19T06:23:15.7774806Z github-actions-monitor-0.1.0.vsix
+2026-04-19T06:23:15.7781546Z ├─ [Content_Types].xml 
+2026-04-19T06:23:15.7782453Z ├─ extension.vsixmanifest 
+2026-04-19T06:23:15.7783168Z └─ extension/
+2026-04-19T06:23:15.7783790Z    ├─ package.json [8.68 KB]
+2026-04-19T06:23:15.7784465Z    ├─ .github/
+2026-04-19T06:23:15.7785005Z    │  └─ workflows/
+2026-04-19T06:23:15.7785661Z    │     └─ ci.yml [1.07 KB]
+2026-04-19T06:23:15.7786239Z    └─ dist/
+2026-04-19T06:23:15.7786910Z       └─ extension.js [259.48 KB]
+2026-04-19T06:23:15.7787667Z 
+2026-04-19T06:23:15.7788199Z The file extension/dist/extension.js is large (259.48 KB)
+2026-04-19T06:23:15.7788699Z 
+2026-04-19T06:23:16.0053644Z Packaged: /home/runner/work/vscode-workflow-monitor/vscode-workflow-monitor/.build/github-actions-monitor-0.1.0.vsix (5 files, 71.84 KB)
+2026-04-19T06:23:16.0204959Z 
+2026-04-19T06:23:16.0206216Z Packaged: /home/runner/work/vscode-workflow-monitor/vscode-workflow-monitor/.build/github-actions-monitor-0.1.0.vsix
+2026-04-19T06:23:16.0418610Z ##[group]Run actions/upload-artifact@v4
+2026-04-19T06:23:16.0418901Z with:
+2026-04-19T06:23:16.0419067Z   name: vsix
+2026-04-19T06:23:16.0419244Z   path: .build/*.vsix
+2026-04-19T06:23:16.0419455Z   if-no-files-found: error
+2026-04-19T06:23:16.0419669Z   compression-level: 6
+2026-04-19T06:23:16.0419870Z   overwrite: false
+2026-04-19T06:23:16.0420070Z   include-hidden-files: false
+2026-04-19T06:23:16.0420284Z ##[endgroup]
+2026-04-19T06:23:16.2642078Z ##[error]No files were found with the provided path: .build/*.vsix. No artifacts will be uploaded.
+2026-04-19T06:23:16.2802497Z Post job cleanup.
+2026-04-19T06:23:16.3771730Z [command]/usr/bin/git version
+2026-04-19T06:23:16.3812526Z git version 2.53.0
+2026-04-19T06:23:16.3859705Z Temporarily overriding HOME='/home/runner/work/_temp/3ff76158-6116-4122-849c-5c236a9649d3' before making global git config changes
+2026-04-19T06:23:16.3861157Z Adding repository directory to the temporary git global config as a safe directory
+2026-04-19T06:23:16.3888751Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/vscode-workflow-monitor/vscode-workflow-monitor
+2026-04-19T06:23:16.3925146Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-04-19T06:23:16.3962078Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-04-19T06:23:16.4204273Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-04-19T06:23:16.4227362Z http.https://github.com/.extraheader
+2026-04-19T06:23:16.4240463Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-04-19T06:23:16.4272689Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-04-19T06:23:16.4517968Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-04-19T06:23:16.4549423Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-04-19T06:23:16.4941914Z Cleaning up orphan processes
+2026-04-19T06:23:16.5244669Z ##[warning]Node.js 20 actions are deprecated. The following actions are running on Node.js 20 and may not work as expected: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. Actions will be forced to run with Node.js 24 by default starting June 2nd, 2026. Node.js 20 will be removed from the runner on September 16th, 2026. Please check if updated versions of these actions are available that support Node.js 24. To opt into Node.js 24 now, set the FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true environment variable on the runner or in your workflow file. Once Node.js 24 becomes the default, you can temporarily opt out by setting ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

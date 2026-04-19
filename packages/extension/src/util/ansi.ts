@@ -17,8 +17,8 @@ export function stripAnsi(input: string): string {
 
 /**
  * GitHub prefixes every log line with an ISO8601 timestamp followed by a
- * space. Stripping it makes log excerpts dramatically more readable and
- * cheaper to paste into an LLM.
+ * space. Stripping it makes log excerpts dramatically more readable when
+ * pasted elsewhere.
  */
 const TIMESTAMP_PREFIX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z\s/;
 
@@ -26,9 +26,13 @@ export function stripTimestamp(line: string): string {
   return line.replace(TIMESTAMP_PREFIX, "");
 }
 
+export function stripTimestamps(input: string): string {
+  // GitHub's log responses begin with a UTF-8 BOM; strip it so the
+  // timestamp regex matches on the very first line too.
+  const normalized = input.startsWith("\uFEFF") ? input.slice(1) : input;
+  return normalized.split(/\r?\n/).map(stripTimestamp).join("\n");
+}
+
 export function cleanLogForPaste(input: string): string {
-  return stripAnsi(input)
-    .split(/\r?\n/)
-    .map(stripTimestamp)
-    .join("\n");
+  return stripAnsi(stripTimestamps(input));
 }

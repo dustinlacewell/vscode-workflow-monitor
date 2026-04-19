@@ -37,7 +37,7 @@ export class GitHubClient implements GitHubApi {
   constructor(token: string, private readonly log: Logger) {
     this.octokit = new Octokit({
       auth: token,
-      userAgent: "github-actions-monitor-vscode",
+      userAgent: "vscode-workflow-monitor",
       request: { retries: 0 },
     });
   }

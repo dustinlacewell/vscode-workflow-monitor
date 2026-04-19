@@ -18,5 +18,6 @@
     "resolveJsonModule": true,
     "sourceMap": true
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*"],
+  "exclude": ["src/webview/main.ts", "src/webview/controller.ts"]
 }

@@ -1,6 +1,10 @@
 {
-  "name": "github-actions-monitor-workspace",
+  "name": "vscode-workflow-monitor",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dustinlacewell/vscode-workflow-monitor"
+  },
   "packageManager": "pnpm@10.22.0",
   "engines": {
     "node": ">=22"
@@ -10,9 +14,9 @@
     "typecheck": "pnpm -r typecheck",
     "dev:site": "pnpm --filter site dev",
     "build:site": "pnpm --filter site build",
-    "build:ext": "pnpm --filter github-actions-monitor build",
-    "watch:ext": "pnpm --filter github-actions-monitor watch",
-    "package:ext": "pnpm --filter github-actions-monitor package",
-    "install:ext": "pnpm --filter github-actions-monitor install:ext"
+    "build:ext": "pnpm --filter vscode-workflow-monitor build",
+    "watch:ext": "pnpm --filter vscode-workflow-monitor watch",
+    "package:ext": "pnpm --filter vscode-workflow-monitor package",
+    "install:ext": "pnpm --filter vscode-workflow-monitor install:ext"
   }
 }

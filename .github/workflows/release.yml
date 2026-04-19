@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Publish ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r typecheck
+
+      - name: Verify tag matches extension version
+        run: |
+          PKG_VER=$(node -p "require('./packages/extension/package.json').version")
+          TAG_VER="${GITHUB_REF_NAME#v}"
+          echo "package.json: ${PKG_VER}  tag: ${TAG_VER}"
+          if [ "${PKG_VER}" != "${TAG_VER}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match extension version ${PKG_VER}"
+            exit 1
+          fi
+
+      - name: Package VSIX
+        run: pnpm --filter vscode-workflow-monitor package
+
+      - name: Locate VSIX
+        id: vsix
+        run: |
+          path=$(ls packages/extension/.build/*.vsix | head -n 1)
+          echo "path=${path}" >> "$GITHUB_OUTPUT"
+          echo "Built: ${path}"
+
+      - name: Publish to VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "::error::VSCE_PAT secret not set — cannot publish to Marketplace."
+            exit 1
+          fi
+          pnpm --filter vscode-workflow-monitor exec vsce publish \
+            --pat "$VSCE_PAT" \
+            --packagePath "${{ steps.vsix.outputs.path }}"
+
+      - name: Publish to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          if [ -z "$OVSX_PAT" ]; then
+            echo "OVSX_PAT secret not set — skipping Open VSX publish."
+            exit 0
+          fi
+          npx --yes ovsx publish "${{ steps.vsix.outputs.path }}" --pat "$OVSX_PAT"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: ${{ steps.vsix.outputs.path }}

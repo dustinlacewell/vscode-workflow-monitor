@@ -11,7 +11,7 @@ import { ViewStateService } from "./services/view-state.js";
 import { WorkflowDefinitionService } from "./services/workflow-definitions.js";
 import { WorkflowStore } from "./services/workflow-store.js";
 import { registerCommands } from "./ui/commands.js";
-import { LOG_SCHEME, LogDocumentProvider } from "./ui/log-document-provider.js";
+import { LogWebviewService } from "./ui/log-webview-panel.js";
 import { StatusBar } from "./ui/status-bar.js";
 import { WorkflowsTreeProvider } from "./ui/tree-provider.js";
 import { createLogger } from "./util/logger.js";
@@ -43,6 +43,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // --- higher-level feature services -------------------------------------
   const logs = new LogService(apiProvider);
+  const logPanels = new LogWebviewService(context.extensionUri, logs, store, log);
   const artifacts = new ArtifactService(apiProvider);
   const definitions = new WorkflowDefinitionService(apiProvider);
   const diagnostics = new DiagnosticsService(logs, store, log);
@@ -50,35 +51,28 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     store, auth, repoWatcher, viewState, sync, coordinator,
-    logs, definitions, diagnostics, notifications,
+    logs, logPanels, definitions, diagnostics, notifications,
   );
 
   // --- UI ----------------------------------------------------------------
   const treeProvider = new WorkflowsTreeProvider(store, viewState);
-  const treeView = vscode.window.createTreeView("githubActionsMonitor.workflows", {
+  const treeView = vscode.window.createTreeView("workflowMonitor.workflows", {
     treeDataProvider: treeProvider,
     showCollapseAll: true,
   });
   const statusBar = new StatusBar(store, readStatusBarEnabled());
-  const logDocProvider = new LogDocumentProvider(logs, store, (runId, jobId) => store.resolveJob(runId, jobId));
-  context.subscriptions.push(
-    treeProvider,
-    treeView,
-    statusBar,
-    logDocProvider,
-    vscode.workspace.registerTextDocumentContentProvider(LOG_SCHEME, logDocProvider),
-  );
+  context.subscriptions.push(treeProvider, treeView, statusBar);
 
   // --- commands ----------------------------------------------------------
   context.subscriptions.push(registerCommands({
-    coordinator, auth, store, sync, logs, artifacts, definitions,
+    coordinator, auth, store, sync, logs, logPanels, artifacts, definitions,
     diagnostics, notifications, viewState, log,
   }));
 
   // --- reactive config + workspace tweaks --------------------------------
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (!e.affectsConfiguration("githubActionsMonitor")) return;
+      if (!e.affectsConfiguration("workflowMonitor")) return;
       sync.updateConfig(readSyncConfig());
       statusBar.setEnabled(readStatusBarEnabled());
       notifications.updateConfig(readNotificationConfig());
@@ -97,7 +91,7 @@ export function activate(context: vscode.ExtensionContext): void {
 export function deactivate(): void { /* context.subscriptions owns teardown */ }
 
 function readSyncConfig(): LiveSyncConfig {
-  const cfg = vscode.workspace.getConfiguration("githubActionsMonitor");
+  const cfg = vscode.workspace.getConfiguration("workflowMonitor");
   return {
     activePollIntervalMs: cfg.get<number>("activePollIntervalMs", 2500),
     idlePollIntervalMs: cfg.get<number>("idlePollIntervalMs", 30000),
@@ -106,11 +100,11 @@ function readSyncConfig(): LiveSyncConfig {
 }
 
 function readStatusBarEnabled(): boolean {
-  return vscode.workspace.getConfiguration("githubActionsMonitor").get("showStatusBar", true);
+  return vscode.workspace.getConfiguration("workflowMonitor").get("showStatusBar", true);
 }
 
 function readNotificationConfig(): NotificationConfig {
-  const cfg = vscode.workspace.getConfiguration("githubActionsMonitor");
+  const cfg = vscode.workspace.getConfiguration("workflowMonitor");
   return {
     notifyOnFailure: cfg.get<boolean>("notifyOnFailure", false),
     notifyOnSuccess: cfg.get<boolean>("notifyOnSuccess", false),

@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import type { GitHubApi } from "../data/github-api.js";
 import type { Job, JobContext, RepoCoordinates, Step } from "../domain/types.js";
 import { isFailureConclusion } from "../domain/types.js";
-import { cleanLogForPaste, stripTimestamp } from "../util/ansi.js";
+import { stripAnsi, stripTimestamp, stripTimestamps } from "../util/ansi.js";
 
 export interface FailureContext {
   readonly jobCtx: JobContext;
@@ -14,7 +14,8 @@ export interface FailureContext {
 interface CachedLog {
   readonly jobId: number;
   readonly status: string;
-  readonly cleaned: string;
+  /** Timestamps stripped, ANSI preserved — the richest representation we need. */
+  readonly raw: string;
 }
 
 const MAX_CONTEXT_BYTES = 120_000;
@@ -40,30 +41,39 @@ export class LogService implements vscode.Disposable {
 
   constructor(private readonly apiProvider: () => GitHubApi | null) {}
 
-  /** Return the cleaned log text for a job, using the cache when possible. */
+  /** Return the paste-ready log text (ANSI stripped) for a job. */
   async getJobLog(repo: RepoCoordinates, job: Job, opts: { force?: boolean } = {}): Promise<string> {
+    const raw = await this.getJobLogRaw(repo, job, opts);
+    return stripAnsi(raw);
+  }
+
+  /**
+   * Return the log with timestamps stripped but ANSI preserved — the webview
+   * renders the escape codes, so stripping them here would lose fidelity.
+   */
+  async getJobLogRaw(repo: RepoCoordinates, job: Job, opts: { force?: boolean } = {}): Promise<string> {
     const cached = this.cache.get(job.id);
     const isComplete = job.status === "completed";
     if (cached && !opts.force && cached.status === job.status && isComplete) {
-      return cached.cleaned;
+      return cached.raw;
     }
     const api = this.apiProvider();
     if (!api) throw new Error("Not authenticated — sign in to GitHub first.");
 
-    const raw = await api.fetchJobLog(repo, job.id);
-    const cleaned = cleanLogForPaste(raw);
-    const changed = !cached || cached.cleaned !== cleaned || cached.status !== job.status;
-    this.cache.set(job.id, { jobId: job.id, status: job.status, cleaned });
+    const fetched = await api.fetchJobLog(repo, job.id);
+    const raw = stripTimestamps(fetched);
+    const changed = !cached || cached.raw !== raw || cached.status !== job.status;
+    this.cache.set(job.id, { jobId: job.id, status: job.status, raw });
     // Fire only when content (or terminal status) actually changed — subscribers
-    // re-render on this, and re-rendering triggers another getJobLog, so firing
-    // on every fetch would loop forever while tailing an active job.
+    // re-render on this, and re-rendering triggers another fetch, so firing on
+    // every call would loop forever while tailing an active job.
     if (changed) this.emitter.fire(job.id);
-    return cleaned;
+    return raw;
   }
 
   /**
-   * Build an LLM-paste-friendly failure context for a job:
-   *   metadata header + log excerpt focused on the failing step.
+   * Build a paste-ready failure context for a job: metadata header + log
+   * excerpt focused on the failing step.
    *
    * Falls back to the last MAX_EXCERPT_LINES of the job log if no failing
    * step is recognizable (e.g. the job itself was cancelled mid-stream).

@@ -79,7 +79,7 @@ export class JobNode extends vscode.TreeItem {
     );
     this.iconPath = iconForStatus(job.status, job.conclusion);
     this.contextValue = `job${failSuffix(job)}`;
-    this.command = { command: "githubActionsMonitor.viewJobLog", title: "View Job Log", arguments: [this] };
+    this.command = { command: "workflowMonitor.viewJobLog", title: "View Job Log", arguments: [this] };
   }
 }
 
@@ -94,7 +94,7 @@ export class StepNode extends vscode.TreeItem {
     );
     this.iconPath = iconForStatus(step.status, step.conclusion);
     this.contextValue = `step${failSuffix(step)}`;
-    this.command = { command: "githubActionsMonitor.viewJobLog", title: "View Job Log", arguments: [this] };
+    this.command = { command: "workflowMonitor.viewJobLog", title: "View Job Log", arguments: [this] };
   }
 }
 
@@ -150,19 +150,20 @@ function buildRunTooltip(run: WorkflowRun): vscode.MarkdownString {
   return md;
 }
 
+// The status icon already communicates success/failure/running, so the
+// description text only carries *timing* info — duration for completed items,
+// "started <rel>" for in-flight ones. Pending/queued rows have neither and
+// lean on the icon alone.
 function describeJobTiming(job: Job): string {
-  if (job.status === "in_progress" && job.startedAt) return `running · started ${formatRelative(job.startedAt)}`;
+  if (job.status === "in_progress" && job.startedAt) return `started ${formatRelative(job.startedAt)}`;
   const dur = durationBetween(job.startedAt, job.completedAt);
-  if (job.status === "completed" && dur !== null) return `${job.conclusion ?? "done"} · ${formatDuration(dur)}`;
-  return job.status;
+  if (job.status === "completed" && dur !== null) return formatDuration(dur);
+  return "";
 }
 
 function describeStepTiming(step: Step): string {
-  if (step.status === "in_progress" && step.startedAt) return "running";
   const dur = durationBetween(step.startedAt, step.completedAt);
-  if (step.status === "completed" && dur !== null) {
-    return dur < 1000 ? (step.conclusion ?? "done") : `${step.conclusion ?? "done"} · ${formatDuration(dur)}`;
-  }
-  return step.status;
+  if (step.status === "completed" && dur !== null && dur >= 1000) return formatDuration(dur);
+  return "";
 }
 
