@@ -3,3 +3,5 @@ dist/
 .build/
 *.vsix
 .vscode-test/
+.astro/
+.turbo/

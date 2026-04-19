@@ -30,10 +30,6 @@ export class MessageNode extends vscode.TreeItem {
   }
 }
 
-function openUrlCommand(url: string, title = "Open on GitHub"): vscode.Command {
-  return { command: "githubActionsMonitor.openUrl", title, arguments: [url] };
-}
-
 export class WorkflowNode extends vscode.TreeItem {
   readonly kind = "workflow" as const;
   constructor(
@@ -51,7 +47,6 @@ export class WorkflowNode extends vscode.TreeItem {
     );
     this.iconPath = iconForRun(latestRun);
     this.contextValue = latestRun ? `workflow${failSuffix(latestRun)}` : "workflow";
-    this.command = openUrlCommand(workflow.htmlUrl, "Open workflow on GitHub");
   }
 }
 
@@ -65,7 +60,6 @@ export class RunNode extends vscode.TreeItem {
     this.tooltip = buildRunTooltip(run);
     this.iconPath = iconForRun(run);
     this.contextValue = `run${failSuffix(run)}`;
-    this.command = openUrlCommand(run.htmlUrl, "Open run on GitHub");
   }
 }
 
@@ -85,7 +79,7 @@ export class JobNode extends vscode.TreeItem {
     );
     this.iconPath = iconForStatus(job.status, job.conclusion);
     this.contextValue = `job${failSuffix(job)}`;
-    this.command = openUrlCommand(job.htmlUrl, "Open job on GitHub");
+    this.command = { command: "githubActionsMonitor.viewJobLog", title: "View Job Log", arguments: [this] };
   }
 }
 
@@ -100,8 +94,7 @@ export class StepNode extends vscode.TreeItem {
     );
     this.iconPath = iconForStatus(step.status, step.conclusion);
     this.contextValue = `step${failSuffix(step)}`;
-    // Steps don't have their own URL; open the parent job page (it expands to the failing step).
-    this.command = openUrlCommand(job.htmlUrl, "Open job on GitHub");
+    this.command = { command: "githubActionsMonitor.viewJobLog", title: "View Job Log", arguments: [this] };
   }
 }
 

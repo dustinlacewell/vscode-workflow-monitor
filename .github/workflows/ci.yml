@@ -17,13 +17,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run build
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r typecheck
+      - run: pnpm -r build
 
   package:
     name: Package VSIX
@@ -31,15 +34,17 @@ jobs:
     needs: build
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - run: npx @vscode/vsce package --no-dependencies
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter github-actions-monitor package
       - uses: actions/upload-artifact@v4
         with:
           name: vsix
-          path: '*.vsix'
+          path: packages/extension/.build/*.vsix
           if-no-files-found: error

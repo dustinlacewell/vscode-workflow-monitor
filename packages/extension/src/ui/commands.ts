@@ -6,7 +6,6 @@ import { ArtifactService, humanBytes } from "../services/artifact-service.js";
 import type { AuthService } from "../services/auth.js";
 import type { DiagnosticsService } from "../services/diagnostics-service.js";
 import type { LogService } from "../services/log-service.js";
-import type { LogTailer } from "../services/log-tailer.js";
 import type { NotificationService } from "../services/notification-service.js";
 import type { ViewStateService } from "../services/view-state.js";
 import type { WorkflowDefinitionService } from "../services/workflow-definitions.js";
@@ -31,7 +30,6 @@ export interface CommandDeps {
   readonly store: WorkflowStore;
   readonly sync: LiveSync;
   readonly logs: LogService;
-  readonly tailer: LogTailer;
   readonly artifacts: ArtifactService;
   readonly definitions: WorkflowDefinitionService;
   readonly diagnostics: DiagnosticsService;
@@ -287,19 +285,6 @@ function logCommands(deps: CommandDeps): CommandDef[] {
         } catch (err) {
           vscode.window.showErrorMessage(errMsg(err));
         }
-      },
-    },
-    {
-      id: "githubActionsMonitor.tailJobLog",
-      handler: (node: unknown) => guardJob(deps, node, async (_api, repo, ctx) => {
-        await deps.tailer.start(repo, ctx);
-      }),
-    },
-    {
-      id: "githubActionsMonitor.stopTail",
-      handler: (node: unknown) => {
-        const jobId = jobIdFromNode(node);
-        if (jobId != null) deps.tailer.stop(jobId);
       },
     },
   ];

@@ -3,15 +3,17 @@
   "tasks": [
     {
       "label": "build",
-      "type": "npm",
-      "script": "build",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["--filter", "github-actions-monitor", "build"],
       "group": { "kind": "build", "isDefault": true },
       "problemMatcher": []
     },
     {
       "label": "watch",
-      "type": "npm",
-      "script": "watch",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["--filter", "github-actions-monitor", "watch"],
       "isBackground": true,
       "problemMatcher": []
     }

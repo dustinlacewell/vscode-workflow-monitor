@@ -52,8 +52,12 @@ export class LogService implements vscode.Disposable {
 
     const raw = await api.fetchJobLog(repo, job.id);
     const cleaned = cleanLogForPaste(raw);
+    const changed = !cached || cached.cleaned !== cleaned || cached.status !== job.status;
     this.cache.set(job.id, { jobId: job.id, status: job.status, cleaned });
-    this.emitter.fire(job.id);
+    // Fire only when content (or terminal status) actually changed — subscribers
+    // re-render on this, and re-rendering triggers another getJobLog, so firing
+    // on every fetch would loop forever while tailing an active job.
+    if (changed) this.emitter.fire(job.id);
     return cleaned;
   }
 

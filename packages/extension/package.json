@@ -52,8 +52,6 @@
       { "command": "githubActionsMonitor.showCurrentBranchOnly", "title": "Filter to Current Branch", "category": "GitHub Actions" },
       { "command": "githubActionsMonitor.dispatchWorkflow", "title": "Run Workflow (workflow_dispatch)\u2026", "category": "GitHub Actions", "icon": "$(play)" },
       { "command": "githubActionsMonitor.showArtifacts", "title": "Show Artifacts\u2026", "category": "GitHub Actions", "icon": "$(archive)" },
-      { "command": "githubActionsMonitor.tailJobLog", "title": "Tail Job Log", "category": "GitHub Actions", "icon": "$(broadcast)" },
-      { "command": "githubActionsMonitor.stopTail", "title": "Stop Log Tail", "category": "GitHub Actions" },
       { "command": "githubActionsMonitor.clearDiagnostics", "title": "Clear GitHub Actions Diagnostics", "category": "GitHub Actions" },
       { "command": "githubActionsMonitor.copyFailureContextForJob", "title": "Copy Failure Context (by id)", "category": "GitHub Actions" }
     ],
@@ -68,7 +66,6 @@
         { "command": "githubActionsMonitor.dispatchWorkflow", "when": "view == githubActionsMonitor.workflows && viewItem =~ /^workflow(-failed)?$/", "group": "inline@1" },
         { "command": "githubActionsMonitor.dispatchWorkflow", "when": "view == githubActionsMonitor.workflows && viewItem =~ /^workflow(-failed)?$/", "group": "1_actions@1" },
 
-        { "command": "githubActionsMonitor.viewJobLog", "when": "view == githubActionsMonitor.workflows && viewItem =~ /^(job|step)(-failed)?$/", "group": "inline@1" },
         { "command": "githubActionsMonitor.copyFailureContext", "when": "view == githubActionsMonitor.workflows && viewItem =~ /-failed$/", "group": "inline@2" },
 
         { "command": "githubActionsMonitor.rerunWorkflow", "when": "view == githubActionsMonitor.workflows && viewItem =~ /^run(-failed)?$/", "group": "1_actions@1" },
@@ -79,8 +76,7 @@
 
         { "command": "githubActionsMonitor.viewJobLog", "when": "view == githubActionsMonitor.workflows && viewItem =~ /^(job|step)(-failed)?$/", "group": "2_logs@1" },
         { "command": "githubActionsMonitor.copyJobLog", "when": "view == githubActionsMonitor.workflows && viewItem =~ /^(job|step)(-failed)?$/", "group": "2_logs@2" },
-        { "command": "githubActionsMonitor.copyFailureContext", "when": "view == githubActionsMonitor.workflows && viewItem =~ /^(job|step)-failed$/", "group": "2_logs@3" },
-        { "command": "githubActionsMonitor.tailJobLog", "when": "view == githubActionsMonitor.workflows && viewItem =~ /^(job|step)(-failed)?$/", "group": "2_logs@4" }
+        { "command": "githubActionsMonitor.copyFailureContext", "when": "view == githubActionsMonitor.workflows && viewItem =~ /^(job|step)-failed$/", "group": "2_logs@3" }
       ],
       "commandPalette": [
         { "command": "githubActionsMonitor.openUrl", "when": "false" },

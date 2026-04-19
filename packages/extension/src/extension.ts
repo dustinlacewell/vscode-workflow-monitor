@@ -6,7 +6,6 @@ import { AuthService } from "./services/auth.js";
 import { DiagnosticsService } from "./services/diagnostics-service.js";
 import { LiveSync, type LiveSyncConfig } from "./services/live-sync.js";
 import { LogService } from "./services/log-service.js";
-import { LogTailer } from "./services/log-tailer.js";
 import { NotificationService, type NotificationConfig } from "./services/notification-service.js";
 import { ViewStateService } from "./services/view-state.js";
 import { WorkflowDefinitionService } from "./services/workflow-definitions.js";
@@ -44,7 +43,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // --- higher-level feature services -------------------------------------
   const logs = new LogService(apiProvider);
-  const tailer = new LogTailer(logs, store, log);
   const artifacts = new ArtifactService(apiProvider);
   const definitions = new WorkflowDefinitionService(apiProvider);
   const diagnostics = new DiagnosticsService(logs, store, log);
@@ -52,7 +50,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     store, auth, repoWatcher, viewState, sync, coordinator,
-    logs, tailer, definitions, diagnostics, notifications,
+    logs, definitions, diagnostics, notifications,
   );
 
   // --- UI ----------------------------------------------------------------
@@ -62,7 +60,7 @@ export function activate(context: vscode.ExtensionContext): void {
     showCollapseAll: true,
   });
   const statusBar = new StatusBar(store, readStatusBarEnabled());
-  const logDocProvider = new LogDocumentProvider(logs, (runId, jobId) => store.resolveJob(runId, jobId));
+  const logDocProvider = new LogDocumentProvider(logs, store, (runId, jobId) => store.resolveJob(runId, jobId));
   context.subscriptions.push(
     treeProvider,
     treeView,
@@ -73,7 +71,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // --- commands ----------------------------------------------------------
   context.subscriptions.push(registerCommands({
-    coordinator, auth, store, sync, logs, tailer, artifacts, definitions,
+    coordinator, auth, store, sync, logs, artifacts, definitions,
     diagnostics, notifications, viewState, log,
   }));
 
