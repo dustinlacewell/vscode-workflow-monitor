@@ -39,15 +39,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter vscode-workflow-monitor package
-      - name: Debug — list build outputs
-        run: |
-          echo "PWD: $(pwd)"
-          ls -la packages/extension/.build/ || echo "no .build dir"
-          find packages/extension -name "*.vsix" -type f
-      # Pinned to v4 — v5+ changed glob resolution and stopped finding our
-      # `packages/extension/.build/*.vsix`. Revisit when v8 has clearer docs.
       - uses: actions/upload-artifact@v4
         with:
           name: vsix
           path: packages/extension/.build/*.vsix
           if-no-files-found: error
+          # `.build/` starts with a dot, so its contents are "hidden" by the
+          # default exclusion in v4+. Opt in explicitly.
+          include-hidden-files: true
