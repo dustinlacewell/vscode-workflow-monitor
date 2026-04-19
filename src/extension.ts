@@ -1,148 +1,104 @@
 import * as vscode from "vscode";
-import { GitHubClient } from "./data/github-client.js";
+import { AppCoordinator } from "./app/coordinator.js";
 import { GitRepoWatcher } from "./data/git-repo.js";
+import { ArtifactService } from "./services/artifact-service.js";
 import { AuthService } from "./services/auth.js";
+import { DiagnosticsService } from "./services/diagnostics-service.js";
 import { LiveSync, type LiveSyncConfig } from "./services/live-sync.js";
+import { LogService } from "./services/log-service.js";
+import { LogTailer } from "./services/log-tailer.js";
+import { NotificationService, type NotificationConfig } from "./services/notification-service.js";
+import { ViewStateService } from "./services/view-state.js";
+import { WorkflowDefinitionService } from "./services/workflow-definitions.js";
 import { WorkflowStore } from "./services/workflow-store.js";
-import { RunNode, WorkflowNode, JobNode } from "./ui/tree-items.js";
-import { WorkflowsTreeProvider } from "./ui/tree-provider.js";
+import { registerCommands } from "./ui/commands.js";
+import { LOG_SCHEME, LogDocumentProvider } from "./ui/log-document-provider.js";
 import { StatusBar } from "./ui/status-bar.js";
+import { WorkflowsTreeProvider } from "./ui/tree-provider.js";
 import { createLogger } from "./util/logger.js";
 
 /**
- * Composition root. Builds the dependency graph, wires cross-layer events,
- * and registers VS Code contributions. Nothing here contains business logic —
- * it should read like a wiring diagram.
+ * Composition root. Instantiate services, wire cross-layer events, register
+ * contributions. Anything with logic belongs elsewhere — this file should
+ * read as a dependency graph.
  */
 export function activate(context: vscode.ExtensionContext): void {
   const log = createLogger("GitHub Actions Monitor");
   context.subscriptions.push({ dispose: () => log.dispose() });
 
-  // --- services ----------------------------------------------------------
+  // --- stateless / low-level services ------------------------------------
   const store = new WorkflowStore();
   const auth = new AuthService(log);
   const repoWatcher = new GitRepoWatcher(log);
+  const viewState = new ViewStateService(context.workspaceState);
 
-  let client: GitHubClient | null = null;
-  const getClient = () => client;
+  // `sync` needs the coordinator's API provider; the coordinator needs
+  // `sync` at construction. A late-bound holder breaks the cycle without
+  // leaking a mutable variable beyond this scope.
+  const apiHolder: { coord: AppCoordinator | null } = { coord: null };
+  const apiProvider = () => apiHolder.coord?.api ?? null;
 
-  const sync = new LiveSync(getClient, store, log, readConfig());
-  context.subscriptions.push(store, auth, repoWatcher, sync);
+  const sync = new LiveSync(apiProvider, store, log, readSyncConfig());
+  const coordinator = new AppCoordinator(auth, repoWatcher, store, sync, log);
+  apiHolder.coord = coordinator;
+
+  // --- higher-level feature services -------------------------------------
+  const logs = new LogService(apiProvider);
+  const tailer = new LogTailer(logs, store, log);
+  const artifacts = new ArtifactService(apiProvider);
+  const definitions = new WorkflowDefinitionService(apiProvider);
+  const diagnostics = new DiagnosticsService(logs, store, log);
+  const notifications = new NotificationService(store, context.workspaceState, readNotificationConfig());
+
+  context.subscriptions.push(
+    store, auth, repoWatcher, viewState, sync, coordinator,
+    logs, tailer, definitions, diagnostics, notifications,
+  );
 
   // --- UI ----------------------------------------------------------------
-  const treeProvider = new WorkflowsTreeProvider(store);
+  const treeProvider = new WorkflowsTreeProvider(store, viewState);
   const treeView = vscode.window.createTreeView("githubActionsMonitor.workflows", {
     treeDataProvider: treeProvider,
     showCollapseAll: true,
   });
-  const statusBar = new StatusBar(store, vscode.workspace.getConfiguration("githubActionsMonitor").get("showStatusBar", true));
-  context.subscriptions.push(treeProvider, treeView, statusBar);
-
-  // --- wiring ------------------------------------------------------------
-  const reconcile = (): void => {
-    const token = auth.state.session?.accessToken;
-    const ctx = repoWatcher.context;
-    client = token ? new GitHubClient(token, log) : null;
-
-    if (!client) {
-      log.info("reconcile: no auth → unauthenticated");
-      store.setStatus("unauthenticated");
-      sync.setRepo(null);
-      sync.stop();
-      return;
-    }
-    if (!ctx) {
-      log.info("reconcile: authed, no GitHub repo in workspace → no-repo");
-      store.setRepo(null, null);
-      sync.setRepo(null);
-      sync.stop();
-      return;
-    }
-    log.info(`reconcile: authed + ${ctx.coords.owner}/${ctx.coords.repo}@${ctx.branch ?? "?"} → syncing`);
-    store.setRepo(ctx.coords, ctx.branch);
-    sync.setRepo(ctx.coords);
-    sync.start();
-  };
-
+  const statusBar = new StatusBar(store, readStatusBarEnabled());
+  const logDocProvider = new LogDocumentProvider(logs, (runId, jobId) => store.resolveJob(runId, jobId));
   context.subscriptions.push(
-    auth.onDidChange(() => reconcile()),
-    repoWatcher.onDidChange(() => reconcile()),
-  );
-
-  context.subscriptions.push(
-    vscode.workspace.onDidChangeConfiguration((e) => {
-      if (!e.affectsConfiguration("githubActionsMonitor")) return;
-      const cfg = vscode.workspace.getConfiguration("githubActionsMonitor");
-      sync.updateConfig(readConfig());
-      statusBar.setEnabled(cfg.get("showStatusBar", true));
-    }),
-    vscode.window.onDidChangeActiveTextEditor(() => {
-      // Re-evaluate which repo in a multi-root workspace is "active".
-      // The watcher listens to git-state changes, but not editor focus.
-      // Firing manually is cheap; no-op if nothing changed.
-      void repoWatcher.start(); // idempotent; triggers recompute via internal listeners
-    }),
+    treeProvider,
+    treeView,
+    statusBar,
+    logDocProvider,
+    vscode.workspace.registerTextDocumentContentProvider(LOG_SCHEME, logDocProvider),
   );
 
   // --- commands ----------------------------------------------------------
+  context.subscriptions.push(registerCommands({
+    coordinator, auth, store, sync, logs, tailer, artifacts, definitions,
+    diagnostics, notifications, viewState, log,
+  }));
+
+  // --- reactive config + workspace tweaks --------------------------------
   context.subscriptions.push(
-    vscode.commands.registerCommand("githubActionsMonitor.signIn", async () => {
-      const state = await auth.signIn();
-      if (!state.session) vscode.window.showWarningMessage("GitHub sign-in was cancelled.");
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration("githubActionsMonitor")) return;
+      sync.updateConfig(readSyncConfig());
+      statusBar.setEnabled(readStatusBarEnabled());
+      notifications.updateConfig(readNotificationConfig());
     }),
-    vscode.commands.registerCommand("githubActionsMonitor.refresh", () => sync.refresh()),
-    vscode.commands.registerCommand("githubActionsMonitor.openUrl", (url: unknown) => {
-      if (typeof url !== "string" || url.length === 0) return;
-      void vscode.env.openExternal(vscode.Uri.parse(url));
-    }),
-    vscode.commands.registerCommand("githubActionsMonitor.openInBrowser", (node?: WorkflowNode | RunNode | JobNode) => {
-      const url = pickUrl(node, store);
-      if (url) void vscode.env.openExternal(vscode.Uri.parse(url));
-    }),
-    vscode.commands.registerCommand("githubActionsMonitor.rerunWorkflow", async (node?: RunNode) => {
-      if (!node || !client || !repoWatcher.context) return;
-      try {
-        await client.rerunWorkflow(repoWatcher.context.coords, node.run.id);
-        vscode.window.showInformationMessage(`Re-running #${node.run.runNumber}…`);
-        sync.refresh();
-      } catch (err) {
-        vscode.window.showErrorMessage(`Re-run failed: ${errMsg(err)}`);
-      }
-    }),
-    vscode.commands.registerCommand("githubActionsMonitor.cancelRun", async (node?: RunNode) => {
-      if (!node || !client || !repoWatcher.context) return;
-      const confirm = await vscode.window.showWarningMessage(
-        `Cancel run #${node.run.runNumber}?`,
-        { modal: true },
-        "Cancel run",
-      );
-      if (confirm !== "Cancel run") return;
-      try {
-        await client.cancelRun(repoWatcher.context.coords, node.run.id);
-        sync.refresh();
-      } catch (err) {
-        vscode.window.showErrorMessage(`Cancel failed: ${errMsg(err)}`);
-      }
-    }),
-    vscode.commands.registerCommand("githubActionsMonitor.viewLogs", (node?: RunNode) => {
-      if (!node) return;
-      void vscode.env.openExternal(vscode.Uri.parse(node.run.htmlUrl));
+    vscode.window.onDidChangeActiveTextEditor(() => {
+      // Re-evaluate which repo in a multi-root workspace is "active" when
+      // focus moves between folders. start() is idempotent after init.
+      void repoWatcher.start();
     }),
   );
 
   // --- boot --------------------------------------------------------------
-  void (async () => {
-    await repoWatcher.start();
-    await auth.initialize();
-    reconcile();
-  })();
+  void coordinator.start();
 }
 
-export function deactivate(): void {
-  /* context.subscriptions handles all teardown */
-}
+export function deactivate(): void { /* context.subscriptions owns teardown */ }
 
-function readConfig(): LiveSyncConfig {
+function readSyncConfig(): LiveSyncConfig {
   const cfg = vscode.workspace.getConfiguration("githubActionsMonitor");
   return {
     activePollIntervalMs: cfg.get<number>("activePollIntervalMs", 2500),
@@ -151,19 +107,15 @@ function readConfig(): LiveSyncConfig {
   };
 }
 
-function pickUrl(node: WorkflowNode | RunNode | JobNode | undefined, store: WorkflowStore): string | null {
-  if (node instanceof WorkflowNode) return node.workflow.htmlUrl;
-  if (node instanceof RunNode) return node.run.htmlUrl;
-  if (node instanceof JobNode) return node.job.htmlUrl;
-  // Status-bar click: jump to the most recent run, falling back to Actions tab.
-  const snap = store.snapshot();
-  for (const runs of snap.runsByWorkflowId.values()) {
-    if (runs[0]) return runs[0].htmlUrl;
-  }
-  if (snap.repo) return `https://github.com/${snap.repo.owner}/${snap.repo.repo}/actions`;
-  return null;
+function readStatusBarEnabled(): boolean {
+  return vscode.workspace.getConfiguration("githubActionsMonitor").get("showStatusBar", true);
 }
 
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+function readNotificationConfig(): NotificationConfig {
+  const cfg = vscode.workspace.getConfiguration("githubActionsMonitor");
+  return {
+    notifyOnFailure: cfg.get<boolean>("notifyOnFailure", false),
+    notifyOnSuccess: cfg.get<boolean>("notifyOnSuccess", false),
+    notifyOnActionRequired: cfg.get<boolean>("notifyOnActionRequired", true),
+  };
 }

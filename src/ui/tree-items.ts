@@ -1,11 +1,23 @@
 import * as vscode from "vscode";
-import type { Job, RunConclusion, RunStatus, Workflow, WorkflowRun } from "../domain/types.js";
+import type { Job, RunConclusion, RunStatus, Step, Workflow, WorkflowRun } from "../domain/types.js";
+import { hasFailed } from "../domain/types.js";
+import { durationBetween, formatDuration, formatRelative } from "../util/format.js";
+
+/**
+ * Context values carry a failure suffix (`-failed`) when the item is in a
+ * terminal failure state. Menu `when` clauses use this to restrict commands
+ * like "Copy Failure Context" to items that actually have something to copy.
+ */
+function failSuffix(item: { status: RunStatus; conclusion: RunConclusion }): "" | "-failed" {
+  return hasFailed(item) ? "-failed" : "";
+}
 
 export type TreeNode =
   | MessageNode
   | WorkflowNode
   | RunNode
-  | JobNode;
+  | JobNode
+  | StepNode;
 
 export class MessageNode extends vscode.TreeItem {
   readonly kind = "message" as const;
@@ -38,7 +50,7 @@ export class WorkflowNode extends vscode.TreeItem {
       `**${workflow.name}**\n\n\`${workflow.path}\`\n\n${runCount} recent runs tracked`,
     );
     this.iconPath = iconForRun(latestRun);
-    this.contextValue = "workflow";
+    this.contextValue = latestRun ? `workflow${failSuffix(latestRun)}` : "workflow";
     this.command = openUrlCommand(workflow.htmlUrl, "Open workflow on GitHub");
   }
 }
@@ -52,7 +64,7 @@ export class RunNode extends vscode.TreeItem {
     this.description = parts.join(" · ");
     this.tooltip = buildRunTooltip(run);
     this.iconPath = iconForRun(run);
-    this.contextValue = "run";
+    this.contextValue = `run${failSuffix(run)}`;
     this.command = openUrlCommand(run.htmlUrl, "Open run on GitHub");
   }
 }
@@ -60,14 +72,35 @@ export class RunNode extends vscode.TreeItem {
 export class JobNode extends vscode.TreeItem {
   readonly kind = "job" as const;
   constructor(readonly job: Job) {
-    super(job.name, vscode.TreeItemCollapsibleState.None);
+    super(
+      job.name,
+      job.steps.length > 0
+        ? vscode.TreeItemCollapsibleState.Collapsed
+        : vscode.TreeItemCollapsibleState.None,
+    );
     this.id = `job:${job.id}`;
     this.description = describeJobTiming(job);
     this.tooltip = new vscode.MarkdownString(
-      `**${job.name}**\n\nstatus: \`${job.status}\`${job.conclusion ? ` · conclusion: \`${job.conclusion}\`` : ""}`,
+      `**${job.name}**\n\nstatus: \`${job.status}\`${job.conclusion ? ` · conclusion: \`${job.conclusion}\`` : ""}${job.steps.length ? `\n\n${job.steps.length} steps` : ""}`,
     );
     this.iconPath = iconForStatus(job.status, job.conclusion);
-    this.contextValue = "job";
+    this.contextValue = `job${failSuffix(job)}`;
+    this.command = openUrlCommand(job.htmlUrl, "Open job on GitHub");
+  }
+}
+
+export class StepNode extends vscode.TreeItem {
+  readonly kind = "step" as const;
+  constructor(readonly step: Step, readonly job: Job) {
+    super(`${step.number}. ${step.name}`, vscode.TreeItemCollapsibleState.None);
+    this.id = `step:${job.id}:${step.number}`;
+    this.description = describeStepTiming(step);
+    this.tooltip = new vscode.MarkdownString(
+      `**${step.name}**\n\nstatus: \`${step.status}\`${step.conclusion ? ` · conclusion: \`${step.conclusion}\`` : ""}`,
+    );
+    this.iconPath = iconForStatus(step.status, step.conclusion);
+    this.contextValue = `step${failSuffix(step)}`;
+    // Steps don't have their own URL; open the parent job page (it expands to the failing step).
     this.command = openUrlCommand(job.htmlUrl, "Open job on GitHub");
   }
 }
@@ -125,37 +158,18 @@ function buildRunTooltip(run: WorkflowRun): vscode.MarkdownString {
 }
 
 function describeJobTiming(job: Job): string {
-  if (job.status === "in_progress" && job.startedAt) {
-    return `running · started ${formatRelative(job.startedAt)}`;
-  }
-  if (job.status === "completed" && job.startedAt && job.completedAt) {
-    const durationMs = Date.parse(job.completedAt) - Date.parse(job.startedAt);
-    if (Number.isFinite(durationMs) && durationMs >= 0) return `${job.conclusion ?? "done"} · ${formatDuration(durationMs)}`;
-  }
+  if (job.status === "in_progress" && job.startedAt) return `running · started ${formatRelative(job.startedAt)}`;
+  const dur = durationBetween(job.startedAt, job.completedAt);
+  if (job.status === "completed" && dur !== null) return `${job.conclusion ?? "done"} · ${formatDuration(dur)}`;
   return job.status;
 }
 
-export function formatRelative(iso: string): string {
-  const then = Date.parse(iso);
-  if (!Number.isFinite(then)) return iso;
-  const deltaSec = Math.round((Date.now() - then) / 1000);
-  if (deltaSec < 5) return "just now";
-  if (deltaSec < 60) return `${deltaSec}s ago`;
-  const min = Math.round(deltaSec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.round(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const day = Math.round(hr / 24);
-  return `${day}d ago`;
+function describeStepTiming(step: Step): string {
+  if (step.status === "in_progress" && step.startedAt) return "running";
+  const dur = durationBetween(step.startedAt, step.completedAt);
+  if (step.status === "completed" && dur !== null) {
+    return dur < 1000 ? (step.conclusion ?? "done") : `${step.conclusion ?? "done"} · ${formatDuration(dur)}`;
+  }
+  return step.status;
 }
 
-export function formatDuration(ms: number): string {
-  const sec = Math.round(ms / 1000);
-  if (sec < 60) return `${sec}s`;
-  const min = Math.floor(sec / 60);
-  const rem = sec % 60;
-  if (min < 60) return rem ? `${min}m ${rem}s` : `${min}m`;
-  const hr = Math.floor(min / 60);
-  const mrem = min % 60;
-  return mrem ? `${hr}h ${mrem}m` : `${hr}h`;
-}

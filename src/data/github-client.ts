@@ -1,29 +1,21 @@
 import { Octokit } from "@octokit/rest";
 import { RequestError } from "@octokit/request-error";
 import type {
+  Artifact,
   Job,
   RepoCoordinates,
   RunConclusion,
   RunStatus,
+  Step,
   Workflow,
   WorkflowRun,
 } from "../domain/types.js";
 import type { Logger } from "../util/logger.js";
+import type { GitHubApi, RateLimitSnapshot } from "./github-api.js";
+import { GitHubApiError } from "./github-api.js";
 
-export class GitHubApiError extends Error {
-  readonly status: number | undefined;
-  constructor(message: string, status: number | undefined, cause?: unknown) {
-    super(message, cause !== undefined ? { cause } : undefined);
-    this.name = "GitHubApiError";
-    this.status = status;
-  }
-}
-
-export interface RateLimitSnapshot {
-  readonly remaining: number;
-  readonly limit: number;
-  readonly resetAt: Date;
-}
+export { GitHubApiError } from "./github-api.js";
+export type { RateLimitSnapshot } from "./github-api.js";
 
 interface CacheEntry<T> {
   readonly etag: string;
@@ -31,13 +23,13 @@ interface CacheEntry<T> {
 }
 
 /**
- * Thin GitHub Actions client over Octokit.
+ * Octokit-backed GitHubApi implementation.
  *
  * The client keeps a per-endpoint ETag cache so that unchanged responses come
  * back as 304 Not Modified — these don't count against the primary REST
  * rate limit, which is what lets us poll aggressively while runs are active.
  */
-export class GitHubClient {
+export class GitHubClient implements GitHubApi {
   private readonly octokit: Octokit;
   private readonly cache = new Map<string, CacheEntry<unknown>>();
   private lastRateLimit: RateLimitSnapshot | null = null;
@@ -90,8 +82,89 @@ export class GitHubClient {
     return data.jobs.map(mapJob);
   }
 
+  async fetchJobLog(repo: RepoCoordinates, jobId: number, signal?: AbortSignal): Promise<string> {
+    // The logs endpoint returns a 302 redirect to a signed S3 URL, which
+    // Octokit follows automatically. GitHub rejects non-default Accept
+    // headers here, so we leave Octokit's default ("application/vnd.github+json")
+    // alone — the follow-through to S3 returns plain text regardless.
+    try {
+      const response = await this.octokit.request(
+        "GET /repos/{owner}/{repo}/actions/jobs/{job_id}/logs",
+        {
+          owner: repo.owner,
+          repo: repo.repo,
+          job_id: jobId,
+          ...(signal ? { request: { signal } } : {}),
+        },
+      );
+      this.captureRateLimit(response.headers);
+      return toUtf8(response.data);
+    } catch (err) {
+      if (isAbortError(err)) throw err;
+      throw this.wrap(err, `GET jobs/${jobId}/logs`);
+    }
+  }
+
+  async listArtifacts(repo: RepoCoordinates, runId: number, signal?: AbortSignal): Promise<Artifact[]> {
+    const key = `artifacts:${repo.owner}/${repo.repo}:${runId}`;
+    const data = await this.conditionalGet<{ artifacts: RawArtifact[] }>(
+      key,
+      "GET /repos/{owner}/{repo}/actions/runs/{run_id}/artifacts",
+      { owner: repo.owner, repo: repo.repo, run_id: runId, per_page: 100 },
+      signal,
+    );
+    return data.artifacts.map(mapArtifact);
+  }
+
+  async downloadArtifact(repo: RepoCoordinates, artifactId: number): Promise<Buffer> {
+    try {
+      const response = await this.octokit.request(
+        "GET /repos/{owner}/{repo}/actions/artifacts/{artifact_id}/{archive_format}",
+        { owner: repo.owner, repo: repo.repo, artifact_id: artifactId, archive_format: "zip" },
+      );
+      this.captureRateLimit(response.headers);
+      return toBuffer(response.data);
+    } catch (err) {
+      if (isAbortError(err)) throw err;
+      throw this.wrap(err, `GET artifacts/${artifactId}/zip`);
+    }
+  }
+
+  async getFileContent(repo: RepoCoordinates, path: string, ref: string | null, signal?: AbortSignal): Promise<string> {
+    try {
+      const response = await this.octokit.request("GET /repos/{owner}/{repo}/contents/{path}", {
+        owner: repo.owner,
+        repo: repo.repo,
+        path,
+        ...(ref ? { ref } : {}),
+        headers: { accept: "application/vnd.github.v3.raw" },
+        ...(signal ? { request: { signal } } : {}),
+      });
+      this.captureRateLimit(response.headers);
+      return toUtf8(response.data);
+    } catch (err) {
+      if (isAbortError(err)) throw err;
+      throw this.wrap(err, `GET contents/${path}`);
+    }
+  }
+
+  async dispatchWorkflow(repo: RepoCoordinates, workflowId: number, ref: string, inputs: Record<string, string>): Promise<void> {
+    await this.mutate(
+      "POST /repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches",
+      { owner: repo.owner, repo: repo.repo, workflow_id: workflowId, ref, inputs },
+    );
+  }
+
   async rerunWorkflow(repo: RepoCoordinates, runId: number): Promise<void> {
     await this.mutate(`POST /repos/{owner}/{repo}/actions/runs/{run_id}/rerun`, {
+      owner: repo.owner,
+      repo: repo.repo,
+      run_id: runId,
+    });
+  }
+
+  async rerunFailedJobs(repo: RepoCoordinates, runId: number): Promise<void> {
+    await this.mutate(`POST /repos/{owner}/{repo}/actions/runs/{run_id}/rerun-failed-jobs`, {
       owner: repo.owner,
       repo: repo.repo,
       run_id: runId,
@@ -183,6 +256,22 @@ function isAbortError(err: unknown): boolean {
   return err instanceof Error && (err.name === "AbortError" || err.message === "The operation was aborted.");
 }
 
+function toUtf8(data: unknown): string {
+  if (typeof data === "string") return data;
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
+  if (Buffer.isBuffer(data)) return data.toString("utf8");
+  if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("utf8");
+  return String(data ?? "");
+}
+
+function toBuffer(data: unknown): Buffer {
+  if (Buffer.isBuffer(data)) return data;
+  if (data instanceof ArrayBuffer) return Buffer.from(data);
+  if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  if (typeof data === "string") return Buffer.from(data, "binary");
+  throw new Error("Unexpected response body type for binary download");
+}
+
 // --- mappers: isolate REST shape from domain shape -------------------------
 
 interface RawWorkflow {
@@ -209,6 +298,15 @@ interface RawRun {
   run_started_at: string | null;
   html_url: string;
 }
+interface RawStep {
+  number: number;
+  name: string;
+  status: string;
+  conclusion: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
 interface RawJob {
   id: number;
   run_id: number;
@@ -218,6 +316,7 @@ interface RawJob {
   started_at: string | null;
   completed_at: string | null;
   html_url: string;
+  steps?: RawStep[];
 }
 
 function mapWorkflow(raw: RawWorkflow): Workflow {
@@ -260,5 +359,39 @@ function mapJob(raw: RawJob): Job {
     startedAt: raw.started_at,
     completedAt: raw.completed_at,
     htmlUrl: raw.html_url,
+    steps: (raw.steps ?? []).map(mapStep),
+  };
+}
+
+interface RawArtifact {
+  id: number;
+  name: string;
+  size_in_bytes: number;
+  expired: boolean;
+  created_at: string;
+  expires_at: string | null;
+  archive_download_url: string;
+}
+
+function mapArtifact(raw: RawArtifact): Artifact {
+  return {
+    id: raw.id,
+    name: raw.name,
+    sizeBytes: raw.size_in_bytes,
+    expired: raw.expired,
+    createdAt: raw.created_at,
+    expiresAt: raw.expires_at,
+    archiveDownloadUrl: raw.archive_download_url,
+  };
+}
+
+function mapStep(raw: RawStep): Step {
+  return {
+    number: raw.number,
+    name: raw.name,
+    status: (raw.status ?? "unknown") as RunStatus,
+    conclusion: (raw.conclusion ?? null) as RunConclusion,
+    startedAt: raw.started_at,
+    completedAt: raw.completed_at,
   };
 }

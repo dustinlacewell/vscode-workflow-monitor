@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
-import { GitHubApiError, type GitHubClient } from "../data/github-client.js";
+import type { GitHubApi } from "../data/github-api.js";
+import { GitHubApiError } from "../data/github-api.js";
 import type { RepoCoordinates } from "../domain/types.js";
 import { isActiveStatus } from "../domain/types.js";
 import type { Logger } from "../util/logger.js";
@@ -11,7 +12,7 @@ export interface LiveSyncConfig {
   runsPerWorkflow: number;
 }
 
-export type ClientProvider = () => GitHubClient | null;
+export type ApiProvider = () => GitHubApi | null;
 
 /**
  * Drives the WorkflowStore by polling the GitHub Actions REST API at an
@@ -32,7 +33,7 @@ export class LiveSync implements vscode.Disposable {
   private cycleInFlight = false;
 
   constructor(
-    private readonly clientProvider: ClientProvider,
+    private readonly apiProvider: ApiProvider,
     private readonly store: WorkflowStore,
     private readonly log: Logger,
     private config: LiveSyncConfig,
@@ -84,7 +85,7 @@ export class LiveSync implements vscode.Disposable {
     if (this.cycleInFlight || this.disposed) return;
     this.cycleInFlight = true;
 
-    const client = this.clientProvider();
+    const client = this.apiProvider();
     const repo = this.repo;
 
     if (!client) {
@@ -104,22 +105,32 @@ export class LiveSync implements vscode.Disposable {
     try {
       const workflows = await client.listWorkflows(repo, ac.signal);
       if (ac.signal.aborted) return;
-      this.store.setWorkflows(workflows.filter((w) => w.state === "active"));
-
       const activeWorkflows = workflows.filter((w) => w.state === "active");
-      const liveRunIds = new Set<number>();
+      this.store.setWorkflows(activeWorkflows);
+
+      const allRunIds = new Set<number>();
+      const activeRunIds = new Set<number>();
 
       for (const wf of activeWorkflows) {
         if (ac.signal.aborted) return;
         const runs = await client.listRecentRuns(repo, wf.id, this.config.runsPerWorkflow, ac.signal);
         if (ac.signal.aborted) return;
         this.store.setRuns(wf.id, runs);
-        for (const r of runs) if (isActiveStatus(r.status)) liveRunIds.add(r.id);
+        for (const r of runs) {
+          allRunIds.add(r.id);
+          if (isActiveStatus(r.status)) activeRunIds.add(r.id);
+        }
       }
 
-      // Jobs only for currently-active runs — that's where live progress lives.
-      for (const runId of liveRunIds) {
+      // Jobs are essential for both live progress and post-mortem. Fetch:
+      //   - every cycle for runs still in-flight (progress/state transitions);
+      //   - once for completed runs we haven't seen yet (steps for failures).
+      // ETag caching in the client makes re-fetches of unchanged data cheap.
+      const knownJobs = this.store.snapshot().jobsByRunId;
+      for (const runId of allRunIds) {
         if (ac.signal.aborted) return;
+        const needsFetch = activeRunIds.has(runId) || !knownJobs.has(runId);
+        if (!needsFetch) continue;
         try {
           const jobs = await client.listJobs(repo, runId, ac.signal);
           if (ac.signal.aborted) return;
@@ -129,7 +140,7 @@ export class LiveSync implements vscode.Disposable {
           this.log.warn(`listJobs(${runId}) failed; skipping`, err);
         }
       }
-      this.store.pruneJobs(liveRunIds);
+      this.store.pruneJobs(allRunIds);
     } catch (err) {
       if (isAbort(err)) return;
       this.handleError(err);

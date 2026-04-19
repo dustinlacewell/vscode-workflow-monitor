@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import type { Job, RepoCoordinates, Workflow, WorkflowRun } from "../domain/types.js";
+import type { Job, JobContext, RepoCoordinates, Workflow, WorkflowRun } from "../domain/types.js";
 import { isActiveStatus } from "../domain/types.js";
 
 export type StoreStatus = "idle" | "loading" | "ready" | "error" | "unauthenticated" | "no-repo";
@@ -44,6 +44,31 @@ export class WorkflowStore implements vscode.Disposable {
     }
     return false;
   }
+
+  /** Find a job across all cached runs + its owning run + workflow name. */
+  resolveJob(runId: number, jobId: number): JobContext | null {
+    for (const [workflowId, runs] of this.snap.runsByWorkflowId) {
+      const run = runs.find((r) => r.id === runId);
+      if (!run) continue;
+      const jobs = this.snap.jobsByRunId.get(runId);
+      const job = jobs?.find((j) => j.id === jobId) ?? null;
+      if (!job) return null;
+      const workflow = this.snap.workflows.find((w) => w.id === workflowId);
+      return { run, workflowName: workflow?.name ?? "Unknown workflow", job };
+    }
+    return null;
+  }
+
+  resolveRun(runId: number): { run: WorkflowRun; workflowName: string } | null {
+    for (const [workflowId, runs] of this.snap.runsByWorkflowId) {
+      const run = runs.find((r) => r.id === runId);
+      if (!run) continue;
+      const workflow = this.snap.workflows.find((w) => w.id === workflowId);
+      return { run, workflowName: workflow?.name ?? "Unknown workflow" };
+    }
+    return null;
+  }
+
 
   setStatus(status: StoreStatus, errorMessage: string | null = null): void {
     this.update({ status, errorMessage });
