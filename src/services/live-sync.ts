@@ -123,13 +123,19 @@ export class LiveSync implements vscode.Disposable {
       }
 
       // Jobs are essential for both live progress and post-mortem. Fetch:
-      //   - every cycle for runs still in-flight (progress/state transitions);
-      //   - once for completed runs we haven't seen yet (steps for failures).
-      // ETag caching in the client makes re-fetches of unchanged data cheap.
+      //   - for runs still in-flight (every cycle picks up transitions);
+      //   - for runs whose jobs we haven't loaded yet (first post-complete fetch);
+      //   - for runs we already cached but where a cached job is still in a
+      //     non-terminal status — this catches the "run completed but a job
+      //     was mid-transition in our snapshot" case, otherwise the UI shows
+      //     a permanent spinner on that job.
+      // ETag caching keeps re-fetches of unchanged data cheap.
       const knownJobs = this.store.snapshot().jobsByRunId;
       for (const runId of allRunIds) {
         if (ac.signal.aborted) return;
-        const needsFetch = activeRunIds.has(runId) || !knownJobs.has(runId);
+        const cached = knownJobs.get(runId);
+        const anyCachedJobActive = cached?.some((j) => isActiveStatus(j.status)) ?? false;
+        const needsFetch = activeRunIds.has(runId) || !cached || anyCachedJobActive;
         if (!needsFetch) continue;
         try {
           const jobs = await client.listJobs(repo, runId, ac.signal);
