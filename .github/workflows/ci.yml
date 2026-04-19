@@ -39,7 +39,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter vscode-workflow-monitor package
-      - uses: actions/upload-artifact@v7
+      # Pinned to v4 — v5+ changed glob resolution and stopped finding our
+      # `packages/extension/.build/*.vsix`. Revisit when v8 has clearer docs.
+      - uses: actions/upload-artifact@v4
         with:
           name: vsix
           path: packages/extension/.build/*.vsix
