@@ -1,6 +1,15 @@
 ---
 import Base from "../layouts/Base.astro";
 import LogPreview from "../components/LogPreview.astro";
+import extPkg from "../../../extension/package.json";
+
+// Pinned at build time. The deploy-site workflow runs after Release succeeds,
+// so the version we display always matches the latest release on the
+// Marketplace and GitHub.
+const VERSION = `v${extPkg.version}`;
+const MARKETPLACE_URL = "https://marketplace.visualstudio.com/items?itemName=ldlework.vscode-workflow-monitor";
+const REPO_URL = "https://github.com/dustinlacewell/vscode-workflow-monitor";
+const VSIX_URL = `${REPO_URL}/releases/latest/download/vscode-workflow-monitor.vsix`;
 
 const ICON = {
   chevRight:
@@ -56,10 +65,10 @@ const ICON = {
         </div>
       </a>
       <a
-        href="https://github.com/dustinlacewell/vscode-workflow-monitor"
+        href={MARKETPLACE_URL}
         class="btn-primary inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm"
       >
-        Install Workflow Monitor
+        Install {VERSION}
         <svg
           viewBox="0 0 24 24"
           class="h-3.5 w-3.5"
@@ -94,10 +103,10 @@ const ICON = {
         </p>
         <div class="mt-8 flex flex-wrap items-center gap-3 justify-center">
           <a
-            href="https://github.com/dustinlacewell/vscode-workflow-monitor"
+            href={MARKETPLACE_URL}
             class="btn-primary inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm"
           >
-            Install Workflow Monitor
+            Install from Marketplace
             <svg
               viewBox="0 0 24 24"
               class="h-4 w-4"
@@ -111,12 +120,21 @@ const ICON = {
             </svg>
           </a>
           <a
-            href="https://github.com/dustinlacewell/vscode-workflow-monitor"
+            href={VSIX_URL}
             class="btn-secondary inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm"
           >
-            View source
+            Download .vsix
+          </a>
+          <a
+            href={REPO_URL}
+            class="btn-secondary inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm"
+          >
+            View on GitHub
           </a>
         </div>
+        <p class="mt-3 text-center text-xs text-[color:var(--color-fog)]">
+          {VERSION} · MIT licensed
+        </p>
       </div>
 
       <div class="md:col-span-6">

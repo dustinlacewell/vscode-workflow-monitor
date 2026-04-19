@@ -13,6 +13,11 @@ on:
       - "packages/extension/src/domain/**"
       - "pnpm-lock.yaml"
       - ".github/workflows/deploy-site.yml"
+  # Re-deploy after a successful Release so the on-site version label always
+  # matches what's actually published to the Marketplace + GitHub.
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -27,6 +32,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # When chained off a Release run, only proceed if that release succeeded.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v5

@@ -43,9 +43,15 @@ jobs:
         run: |
           # Absolute path so subsequent `pnpm --filter ... exec` invocations
           # (which cd into the package dir) still find the file.
-          path=$(realpath packages/extension/.build/*.vsix | head -n 1)
-          echo "path=${path}" >> "$GITHUB_OUTPUT"
-          echo "Built: ${path}"
+          versioned=$(realpath packages/extension/.build/*.vsix | head -n 1)
+          # Stable-named copy so the website's "Download .vsix" button can
+          # use a fixed `/releases/latest/download/<name>` URL.
+          stable="$(dirname "${versioned}")/vscode-workflow-monitor.vsix"
+          cp "${versioned}" "${stable}"
+          echo "path=${versioned}" >> "$GITHUB_OUTPUT"
+          echo "stable=${stable}" >> "$GITHUB_OUTPUT"
+          echo "Built: ${versioned}"
+          echo "Stable copy: ${stable}"
 
       - name: Publish to VS Code Marketplace
         env:
@@ -75,4 +81,6 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
           generate_release_notes: true
-          files: ${{ steps.vsix.outputs.path }}
+          files: |
+            ${{ steps.vsix.outputs.path }}
+            ${{ steps.vsix.outputs.stable }}
