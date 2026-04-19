@@ -1,0 +1,157 @@
+{
+  "name": "github-actions-monitor",
+  "displayName": "GitHub Actions Monitor",
+  "description": "Live sidebar view into your project's GitHub Actions.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": ["SCM Providers", "Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "githubActionsMonitor",
+          "title": "GitHub Actions",
+          "icon": "$(github-action)"
+        }
+      ]
+    },
+    "views": {
+      "githubActionsMonitor": [
+        {
+          "id": "githubActionsMonitor.workflows",
+          "name": "Workflows",
+          "icon": "$(github-action)",
+          "contextualTitle": "GitHub Actions"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "githubActionsMonitor.workflows",
+        "contents": "No GitHub repository detected in this workspace.\n[Sign in to GitHub](command:githubActionsMonitor.signIn)\n\nOpen a folder with a Git repository whose `origin` remote points at GitHub."
+      }
+    ],
+    "commands": [
+      {
+        "command": "githubActionsMonitor.refresh",
+        "title": "Refresh",
+        "category": "GitHub Actions",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "githubActionsMonitor.signIn",
+        "title": "Sign in to GitHub",
+        "category": "GitHub Actions"
+      },
+      {
+        "command": "githubActionsMonitor.openInBrowser",
+        "title": "Open on GitHub",
+        "category": "GitHub Actions",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "githubActionsMonitor.rerunWorkflow",
+        "title": "Re-run Workflow",
+        "category": "GitHub Actions",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "githubActionsMonitor.cancelRun",
+        "title": "Cancel Run",
+        "category": "GitHub Actions",
+        "icon": "$(stop-circle)"
+      },
+      {
+        "command": "githubActionsMonitor.viewLogs",
+        "title": "View Logs",
+        "category": "GitHub Actions",
+        "icon": "$(output)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "githubActionsMonitor.refresh",
+          "when": "view == githubActionsMonitor.workflows",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "githubActionsMonitor.openInBrowser",
+          "when": "view == githubActionsMonitor.workflows && viewItem =~ /^(workflow|run|job)$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "githubActionsMonitor.rerunWorkflow",
+          "when": "view == githubActionsMonitor.workflows && viewItem == run",
+          "group": "inline@2"
+        },
+        {
+          "command": "githubActionsMonitor.cancelRun",
+          "when": "view == githubActionsMonitor.workflows && viewItem == run",
+          "group": "1_actions@1"
+        },
+        {
+          "command": "githubActionsMonitor.viewLogs",
+          "when": "view == githubActionsMonitor.workflows && viewItem == run",
+          "group": "1_actions@2"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "GitHub Actions Monitor",
+      "properties": {
+        "githubActionsMonitor.activePollIntervalMs": {
+          "type": "number",
+          "default": 2500,
+          "minimum": 1000,
+          "description": "Poll interval (ms) when one or more runs are in-progress."
+        },
+        "githubActionsMonitor.idlePollIntervalMs": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 5000,
+          "description": "Poll interval (ms) when no runs are in-progress."
+        },
+        "githubActionsMonitor.runsPerWorkflow": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Number of recent runs to show per workflow."
+        },
+        "githubActionsMonitor.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show latest run status in the status bar."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "package": "node bin/package-extension.mjs",
+    "install:ext": "node bin/install-extension.mjs",
+    "vscode:prepublish": "node esbuild.mjs --production"
+  },
+  "dependencies": {
+    "@octokit/request-error": "^6.1.5",
+    "@octokit/rest": "^21.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.5",
+    "@types/vscode": "^1.95.0",
+    "@vscode/vsce": "^3.2.1",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.3"
+  },
+  "extensionDependencies": ["vscode.git"]
+}
