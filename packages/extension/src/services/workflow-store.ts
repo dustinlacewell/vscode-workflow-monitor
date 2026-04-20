@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import type { AuthFailure } from "../core/auth/failure.js";
 import type { Job, JobContext, RepoCoordinates, Workflow, WorkflowRun } from "../core/domain/types.js";
 import { isActiveStatus } from "../core/domain/types.js";
 import type { StoreSnapshot, StoreStatus } from "../core/store/snapshot.js";
@@ -21,6 +22,7 @@ export class WorkflowStore implements vscode.Disposable {
     runsByWorkflowId: new Map(),
     jobsByRunId: new Map(),
     errorMessage: null,
+    authFailure: null,
     lastUpdated: null,
   };
 
@@ -64,6 +66,10 @@ export class WorkflowStore implements vscode.Disposable {
     this.update({ status, errorMessage });
   }
 
+  setAuthFailure(failure: AuthFailure | null): void {
+    this.update({ authFailure: failure });
+  }
+
   setRepo(repo: RepoCoordinates | null, branch: string | null): void {
     if (
       this.snap.repo?.owner === repo?.owner &&
@@ -78,11 +84,12 @@ export class WorkflowStore implements vscode.Disposable {
       jobsByRunId: new Map(),
       status: repo ? "loading" : "no-repo",
       errorMessage: null,
+      authFailure: null,
     });
   }
 
   setWorkflows(workflows: readonly Workflow[]): void {
-    this.update({ workflows, status: "ready", errorMessage: null, lastUpdated: new Date() });
+    this.update({ workflows, status: "ready", errorMessage: null, authFailure: null, lastUpdated: new Date() });
   }
 
   setRuns(workflowId: number, runs: readonly WorkflowRun[]): void {

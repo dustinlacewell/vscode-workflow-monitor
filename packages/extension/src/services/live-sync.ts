@@ -1,9 +1,11 @@
 import * as vscode from "vscode";
 import type { GitHubApi } from "../data/github-api.js";
 import { GitHubApiError } from "../data/github-api.js";
+import { classifyAuthFailure, type AuthFailure } from "../core/auth/failure.js";
 import type { RepoCoordinates } from "../core/domain/types.js";
 import { isActiveStatus } from "../core/domain/types.js";
 import type { Logger } from "../util/logger.js";
+import { AuthService } from "./auth.js";
 import type { WorkflowStore } from "./workflow-store.js";
 
 export interface LiveSyncConfig {
@@ -165,6 +167,8 @@ export class LiveSync implements vscode.Disposable {
 
   private handleError(err: unknown): void {
     if (err instanceof GitHubApiError) {
+      const failure = this.buildFailure(err);
+      this.store.setAuthFailure(failure);
       if (err.status === 401 || err.status === 403) {
         this.store.setStatus("unauthenticated", err.message);
         this.log.warn("Auth rejected by GitHub API; pausing until sign-in refreshes.");
@@ -179,7 +183,25 @@ export class LiveSync implements vscode.Disposable {
       return;
     }
     this.log.error("Sync cycle failed", err);
-    this.store.setStatus("error", err instanceof Error ? err.message : String(err));
+    const message = err instanceof Error ? err.message : String(err);
+    this.store.setAuthFailure(classifyAuthFailure({
+      status: null,
+      message,
+      route: null,
+      requestedScopes: AuthService.REQUESTED_SCOPES,
+    }));
+    this.store.setStatus("error", message);
+  }
+
+  private buildFailure(err: GitHubApiError): AuthFailure {
+    return classifyAuthFailure({
+      status: err.status ?? null,
+      message: err.message,
+      route: err.route,
+      headers: err.headers ?? undefined,
+      documentationUrl: err.documentationUrl,
+      requestedScopes: AuthService.REQUESTED_SCOPES,
+    });
   }
 
   private clearTimer(): void {

@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import type { AppCoordinator } from "../app/coordinator.js";
+import { formatAuthFailureMarkdown, type AuthFailure } from "../core/auth/failure.js";
 import type { JobContext } from "../core/domain/types.js";
 import { hasFailed } from "../core/domain/types.js";
 import { ArtifactService, humanBytes } from "../services/artifact-service.js";
@@ -82,7 +83,7 @@ function navCommands({ store }: CommandDeps): CommandDef[] {
 
 // --- auth ------------------------------------------------------------------
 
-function authCommands({ auth }: CommandDeps): CommandDef[] {
+function authCommands({ auth, store }: CommandDeps): CommandDef[] {
   return [
     {
       id: "workflowMonitor.signIn",
@@ -91,7 +92,31 @@ function authCommands({ auth }: CommandDeps): CommandDef[] {
         if (!state.session) vscode.window.showWarningMessage("GitHub sign-in was cancelled.");
       },
     },
+    {
+      id: "workflowMonitor.showAuthDetails",
+      handler: async (explicit: unknown) => {
+        const failure = pickAuthFailure(explicit) ?? store.snapshot().authFailure;
+        if (!failure) {
+          vscode.window.showInformationMessage("No recent GitHub API failure to inspect.");
+          return;
+        }
+        const doc = await vscode.workspace.openTextDocument({
+          content: formatAuthFailureMarkdown(failure),
+          language: "markdown",
+        });
+        await vscode.window.showTextDocument(doc, { preview: true });
+      },
+    },
   ];
+}
+
+function pickAuthFailure(v: unknown): AuthFailure | null {
+  if (!v || typeof v !== "object") return null;
+  // Duck-type: plenty of required fields to avoid false positives.
+  const obj = v as Partial<AuthFailure>;
+  if (typeof obj.kind !== "string" || typeof obj.occurredAt !== "string") return null;
+  if (!Array.isArray(obj.requestedScopes)) return null;
+  return obj as AuthFailure;
 }
 
 // --- run management --------------------------------------------------------

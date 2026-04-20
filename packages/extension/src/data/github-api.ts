@@ -36,11 +36,23 @@ export interface GitHubApi {
   cancelRun(repo: RepoCoordinates, runId: number): Promise<void>;
 }
 
+export interface GitHubApiErrorDetail {
+  readonly route?: string | null;
+  readonly headers?: Readonly<Record<string, unknown>> | null;
+  readonly documentationUrl?: string | null;
+}
+
 export class GitHubApiError extends Error {
   readonly status: number | undefined;
-  constructor(message: string, status: number | undefined, cause?: unknown) {
+  readonly route: string | null;
+  readonly headers: Readonly<Record<string, unknown>> | null;
+  readonly documentationUrl: string | null;
+  constructor(message: string, status: number | undefined, detail: GitHubApiErrorDetail = {}, cause?: unknown) {
     super(message, cause !== undefined ? { cause } : undefined);
     this.name = "GitHubApiError";
     this.status = status;
+    this.route = detail.route ?? null;
+    this.headers = detail.headers ?? null;
+    this.documentationUrl = detail.documentationUrl ?? null;
   }
 }

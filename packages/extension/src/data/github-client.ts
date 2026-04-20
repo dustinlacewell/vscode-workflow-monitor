@@ -229,12 +229,21 @@ export class GitHubClient implements GitHubApi {
   private wrap(err: unknown, route: string): GitHubApiError {
     if (err instanceof RequestError) {
       this.log.warn(`GitHub API ${route} failed: ${err.status} ${err.message}`);
-      return new GitHubApiError(err.message, err.status, err);
+      const responseData = err.response?.data as { documentation_url?: unknown } | undefined;
+      const docUrl = typeof responseData?.documentation_url === "string"
+        ? responseData.documentation_url
+        : null;
+      return new GitHubApiError(err.message, err.status, {
+        route,
+        headers: err.response?.headers ?? null,
+        documentationUrl: docUrl,
+      }, err);
     }
     this.log.error(`GitHub API ${route} failed`, err);
     return new GitHubApiError(
       err instanceof Error ? err.message : String(err),
       undefined,
+      { route },
       err,
     );
   }

@@ -1,6 +1,8 @@
 import * as vscode from "vscode";
 import type { WorkflowStore } from "../services/workflow-store.js";
 import type { ViewStateService } from "../services/view-state.js";
+import type { AuthFailure } from "../core/auth/failure.js";
+import { missingScopes, summariseAuthFailure } from "../core/auth/failure.js";
 import type { BranchBanner, RootView } from "../core/selectors/root-view.js";
 import { selectRootView } from "../core/selectors/root-view.js";
 import { selectRunJobs, selectWorkflowRuns, type WorkflowRow } from "../core/selectors/runs.js";
@@ -67,14 +69,9 @@ function renderRootView(view: RootView): TreeNode[] {
     case "no-repo":
       return [new MessageNode("No GitHub repository in this workspace", "repo")];
     case "unauthenticated":
-      return [new MessageNode(
-        "Sign in to GitHub to load workflows",
-        "sign-in",
-        view.errorMessage ?? undefined,
-        { command: "workflowMonitor.signIn", title: "Sign in to GitHub" },
-      )];
+      return renderUnauthenticated(view.authFailure, view.errorMessage);
     case "error":
-      return [new MessageNode(`Error: ${view.errorMessage}`, "error")];
+      return renderError(view.authFailure, view.errorMessage);
     case "loading":
       return [new MessageNode("Loading workflows…", "sync~spin")];
     case "empty":
@@ -82,6 +79,73 @@ function renderRootView(view: RootView): TreeNode[] {
     case "workflows":
       return renderWorkflowRows(view.banner, view.rows);
   }
+}
+
+const RECONNECT_COMMAND: vscode.Command = { command: "workflowMonitor.signIn", title: "Sign in to GitHub" };
+const DETAILS_COMMAND: vscode.Command = { command: "workflowMonitor.showAuthDetails", title: "Show details" };
+
+function renderUnauthenticated(failure: AuthFailure | null, fallbackMessage: string | null): TreeNode[] {
+  if (!failure) {
+    return [new MessageNode(
+      "Sign in to GitHub to load workflows",
+      "sign-in",
+      fallbackMessage ?? undefined,
+      RECONNECT_COMMAND,
+    )];
+  }
+  return renderFailureBanner(failure, { signInLabel: "Click to reconnect to GitHub" });
+}
+
+function renderError(failure: AuthFailure | null, message: string): TreeNode[] {
+  if (!failure) return [new MessageNode(`Error: ${message}`, "error")];
+  return renderFailureBanner(failure, { signInLabel: "Click to retry after reconnecting" });
+}
+
+function renderFailureBanner(failure: AuthFailure, opts: { signInLabel: string }): TreeNode[] {
+  const nodes: TreeNode[] = [
+    new MessageNode(
+      summariseAuthFailure(failure),
+      iconForFailureKind(failure),
+      buildFailureTooltip(failure, opts.signInLabel),
+      RECONNECT_COMMAND,
+    ),
+    new MessageNode(
+      "Show details\u2026",
+      "info",
+      `Open failure details for ${failure.route ?? "GitHub API call"}`,
+      { ...DETAILS_COMMAND, arguments: [failure] },
+    ),
+  ];
+  return nodes;
+}
+
+function iconForFailureKind(failure: AuthFailure): string {
+  switch (failure.kind) {
+    case "bad-credentials":
+    case "insufficient-scope":
+      return "shield";
+    case "forbidden":
+      return "lock";
+    case "not-found":
+      return "question";
+    case "server-error":
+      return "server";
+    case "network":
+      return "debug-disconnect";
+    case "other":
+      return "error";
+  }
+}
+
+function buildFailureTooltip(failure: AuthFailure, signInLabel: string): string {
+  const parts = [signInLabel];
+  if (failure.route) parts.push(`Endpoint: ${failure.route}`);
+  const missing = missingScopes(failure);
+  if (missing.length > 0) parts.push(`Missing scope: ${missing.join(", ")}`);
+  if (failure.currentScopes && failure.currentScopes.length > 0) {
+    parts.push(`Token scopes: ${failure.currentScopes.join(", ")}`);
+  }
+  return parts.join("\n");
 }
 
 function renderWorkflowRows(banner: BranchBanner | null, rows: readonly WorkflowRow[]): TreeNode[] {

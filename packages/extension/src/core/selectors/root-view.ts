@@ -1,3 +1,4 @@
+import type { AuthFailure } from "../auth/failure.js";
 import type { StoreSnapshot } from "../store/snapshot.js";
 import { selectWorkflowRows, type BranchFilter, type WorkflowRow } from "./runs.js";
 
@@ -13,12 +14,16 @@ export type BranchBanner =
 /**
  * View-model for the root of the tree. Tagged union keeps the UI layer's
  * translation pure: one branch per kind, no conditional stacking.
+ *
+ * `unauthenticated` and `error` both carry the structured `authFailure` when
+ * one is available — the tree provider uses it to render scope hints, route,
+ * and a "Details" action rather than a generic "something went wrong" label.
  */
 export type RootView =
   | { kind: "initializing" }
   | { kind: "no-repo" }
-  | { kind: "unauthenticated"; errorMessage: string | null }
-  | { kind: "error"; errorMessage: string }
+  | { kind: "unauthenticated"; errorMessage: string | null; authFailure: AuthFailure | null }
+  | { kind: "error"; errorMessage: string; authFailure: AuthFailure | null }
   | { kind: "loading" }
   | { kind: "empty" }
   | { kind: "workflows"; banner: BranchBanner | null; rows: readonly WorkflowRow[] };
@@ -30,9 +35,9 @@ export function selectRootView(snap: StoreSnapshot, branchFilter: BranchFilter):
     case "no-repo":
       return { kind: "no-repo" };
     case "unauthenticated":
-      return { kind: "unauthenticated", errorMessage: snap.errorMessage };
+      return { kind: "unauthenticated", errorMessage: snap.errorMessage, authFailure: snap.authFailure };
     case "error":
-      return { kind: "error", errorMessage: snap.errorMessage ?? "unknown" };
+      return { kind: "error", errorMessage: snap.errorMessage ?? "unknown", authFailure: snap.authFailure };
     case "loading":
       if (snap.workflows.length === 0) return { kind: "loading" };
       break;

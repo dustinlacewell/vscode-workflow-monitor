@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { classifyAuthFailure } from "../auth/failure.js";
 import { selectRootView } from "./root-view.js";
 import { makeRun, makeSnapshot, makeWorkflow } from "./test-fixtures.js";
 
@@ -13,14 +14,14 @@ describe("selectRootView", () => {
       .toEqual({ kind: "no-repo" });
   });
 
-  it("unauthenticated forwards errorMessage", () => {
+  it("unauthenticated forwards errorMessage and authFailure", () => {
     expect(selectRootView(makeSnapshot({ status: "unauthenticated", errorMessage: "expired" }), "current"))
-      .toEqual({ kind: "unauthenticated", errorMessage: "expired" });
+      .toEqual({ kind: "unauthenticated", errorMessage: "expired", authFailure: null });
   });
 
   it("error falls back to 'unknown' if no message", () => {
     expect(selectRootView(makeSnapshot({ status: "error" }), "current"))
-      .toEqual({ kind: "error", errorMessage: "unknown" });
+      .toEqual({ kind: "error", errorMessage: "unknown", authFailure: null });
   });
 
   it("loading with nothing cached shows spinner", () => {
@@ -70,5 +71,19 @@ describe("selectRootView", () => {
     const v = selectRootView(snap, "all");
     if (v.kind !== "workflows") throw new Error("expected workflows view");
     expect(v.banner).toEqual({ kind: "all", branch: "main" });
+  });
+
+  it("carries authFailure on unauthenticated and error", () => {
+    const failure = classifyAuthFailure({
+      status: 403,
+      message: "Resource not accessible",
+      route: "GET /repos/{owner}/{repo}/actions/workflows",
+      headers: { "x-oauth-scopes": "repo", "x-accepted-oauth-scopes": "workflow" },
+      requestedScopes: ["repo", "workflow"],
+    });
+    const snap = makeSnapshot({ status: "unauthenticated", errorMessage: failure.message, authFailure: failure });
+    const v = selectRootView(snap, "current");
+    if (v.kind !== "unauthenticated") throw new Error("expected unauthenticated view");
+    expect(v.authFailure).toBe(failure);
   });
 });

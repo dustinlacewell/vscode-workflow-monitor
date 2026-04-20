@@ -13,6 +13,9 @@ export class AuthService implements vscode.Disposable {
   private static readonly PROVIDER = "github";
   private static readonly SCOPES = ["repo", "workflow"];
 
+  /** Scopes this extension requests from the GitHub provider, for diagnostics. */
+  static readonly REQUESTED_SCOPES: readonly string[] = AuthService.SCOPES;
+
   private readonly emitter = new vscode.EventEmitter<AuthState>();
   private readonly disposables: vscode.Disposable[] = [];
   private current: AuthState = { session: null };

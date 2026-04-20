@@ -71,6 +71,11 @@
         "category": "Workflow Monitor"
       },
       {
+        "command": "workflowMonitor.showAuthDetails",
+        "title": "Show GitHub API Failure Details",
+        "category": "Workflow Monitor"
+      },
+      {
         "command": "workflowMonitor.openInBrowser",
         "title": "Open on GitHub",
         "category": "Workflow Monitor",
