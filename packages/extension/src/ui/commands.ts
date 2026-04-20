@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import type { AppCoordinator } from "../app/coordinator.js";
-import type { JobContext } from "../domain/types.js";
-import { hasFailed } from "../domain/types.js";
+import type { JobContext } from "../core/domain/types.js";
+import { hasFailed } from "../core/domain/types.js";
 import { ArtifactService, humanBytes } from "../services/artifact-service.js";
 import type { AuthService } from "../services/auth.js";
 import type { DiagnosticsService } from "../services/diagnostics-service.js";
@@ -179,7 +179,7 @@ function artifactCommands(deps: CommandDeps): CommandDef[] {
       handler: (node: unknown) => guardRun(deps, node, async (api, repo, run) => {
         const artifacts = await api.listArtifacts(repo, run.id);
         if (artifacts.length === 0) { vscode.window.showInformationMessage(`Run #${run.runNumber} has no artifacts.`); return; }
-        interface ArtifactPick extends vscode.QuickPickItem { artifact: import("../domain/types.js").Artifact }
+        interface ArtifactPick extends vscode.QuickPickItem { artifact: import("../core/domain/types.js").Artifact }
         const items: ArtifactPick[] = artifacts.map((a) => ({
           label: a.name,
           description: `${humanBytes(a.sizeBytes)}${a.expired ? " · expired" : ""}`,

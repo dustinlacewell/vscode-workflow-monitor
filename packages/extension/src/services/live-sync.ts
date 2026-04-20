@@ -1,8 +1,8 @@
 import * as vscode from "vscode";
 import type { GitHubApi } from "../data/github-api.js";
 import { GitHubApiError } from "../data/github-api.js";
-import type { RepoCoordinates } from "../domain/types.js";
-import { isActiveStatus } from "../domain/types.js";
+import type { RepoCoordinates } from "../core/domain/types.js";
+import { isActiveStatus } from "../core/domain/types.js";
 import type { Logger } from "../util/logger.js";
 import type { WorkflowStore } from "./workflow-store.js";
 

@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import type { DispatchInput } from "../domain/types.js";
+import type { DispatchInput } from "../core/domain/types.js";
 
 /**
  * Sequential input collection for a workflow_dispatch. Returns null if the

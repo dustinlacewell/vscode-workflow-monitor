@@ -1,5 +1,5 @@
-import type { RunStatus, Step } from "../domain/types.js";
-import { isActiveStatus } from "../domain/types.js";
+import type { RunStatus, Step } from "../core/domain/types.js";
+import { isActiveStatus } from "../core/domain/types.js";
 import type { ParsedSection, SeverityKind } from "./log-parser.js";
 
 /**

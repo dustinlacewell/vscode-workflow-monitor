@@ -9,7 +9,7 @@ import type {
   Step,
   Workflow,
   WorkflowRun,
-} from "../domain/types.js";
+} from "../core/domain/types.js";
 import type { Logger } from "../util/logger.js";
 import type { GitHubApi, RateLimitSnapshot } from "./github-api.js";
 import { GitHubApiError } from "./github-api.js";

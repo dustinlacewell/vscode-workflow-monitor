@@ -7,7 +7,7 @@ import type {
   RepoCoordinates,
   Workflow,
   WorkflowDispatchSpec,
-} from "../domain/types.js";
+} from "../core/domain/types.js";
 
 /**
  * Reads workflow YAML definitions from the repository so we can inspect

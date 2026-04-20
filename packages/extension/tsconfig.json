@@ -19,5 +19,10 @@
     "sourceMap": true
   },
   "include": ["src/**/*"],
-  "exclude": ["src/webview/main.ts", "src/webview/controller.ts"]
+  "exclude": [
+    "src/webview/main.ts",
+    "src/webview/controller.ts",
+    "src/**/*.test.ts",
+    "src/**/test-fixtures.ts"
+  ]
 }

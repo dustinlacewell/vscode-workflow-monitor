@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import type { JobContext, WorkflowRun } from "../domain/types.js";
+import type { JobContext, WorkflowRun } from "../core/domain/types.js";
 import type { WorkflowStore } from "./workflow-store.js";
 
 export interface NotificationConfig {

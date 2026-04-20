@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import type { JobContext, RepoCoordinates } from "../domain/types.js";
+import type { JobContext, RepoCoordinates } from "../core/domain/types.js";
 import type { LogService } from "./log-service.js";
 import type { WorkflowStore } from "./workflow-store.js";
 import type { Logger } from "../util/logger.js";

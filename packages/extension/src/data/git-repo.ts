@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import type { GitAPI, GitExtension, Remote, Repository } from "./git-extension.js";
-import type { RepoCoordinates } from "../domain/types.js";
+import type { RepoCoordinates } from "../core/domain/types.js";
 import type { Logger } from "../util/logger.js";
 
 function orderRemotes(remotes: readonly Remote[], upstream: string | undefined): Remote[] {

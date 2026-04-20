@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
-import { isActiveStatus, type WorkflowRun } from "../domain/types.js";
-import type { StoreSnapshot, WorkflowStore } from "../services/workflow-store.js";
+import { isActiveStatus, type WorkflowRun } from "../core/domain/types.js";
+import type { WorkflowStore } from "../services/workflow-store.js";
+import type { StoreSnapshot } from "../core/store/snapshot.js";
 
 /**
  * Status-bar badge reflecting (in priority order):

@@ -1,19 +1,9 @@
 import * as vscode from "vscode";
-import type { Job, JobContext, RepoCoordinates, Workflow, WorkflowRun } from "../domain/types.js";
-import { isActiveStatus } from "../domain/types.js";
+import type { Job, JobContext, RepoCoordinates, Workflow, WorkflowRun } from "../core/domain/types.js";
+import { isActiveStatus } from "../core/domain/types.js";
+import type { StoreSnapshot, StoreStatus } from "../core/store/snapshot.js";
 
-export type StoreStatus = "idle" | "loading" | "ready" | "error" | "unauthenticated" | "no-repo";
-
-export interface StoreSnapshot {
-  readonly status: StoreStatus;
-  readonly repo: RepoCoordinates | null;
-  readonly branch: string | null;
-  readonly workflows: readonly Workflow[];
-  readonly runsByWorkflowId: ReadonlyMap<number, readonly WorkflowRun[]>;
-  readonly jobsByRunId: ReadonlyMap<number, readonly Job[]>;
-  readonly errorMessage: string | null;
-  readonly lastUpdated: Date | null;
-}
+export type { StoreSnapshot, StoreStatus };
 
 /**
  * Single source of truth for the sidebar's domain data.

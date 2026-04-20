@@ -1,4 +1,4 @@
-import type { Artifact, Job, RepoCoordinates, Workflow, WorkflowRun } from "../domain/types.js";
+import type { Artifact, Job, RepoCoordinates, Workflow, WorkflowRun } from "../core/domain/types.js";
 
 export interface RateLimitSnapshot {
   readonly remaining: number;

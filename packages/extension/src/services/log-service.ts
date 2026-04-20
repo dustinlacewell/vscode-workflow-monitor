@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import type { GitHubApi } from "../data/github-api.js";
-import type { Job, JobContext, RepoCoordinates, Step } from "../domain/types.js";
-import { isFailureConclusion } from "../domain/types.js";
+import type { Job, JobContext, RepoCoordinates, Step } from "../core/domain/types.js";
+import { isFailureConclusion } from "../core/domain/types.js";
 import { stripAnsi, stripTimestamp, stripTimestamps } from "../util/ansi.js";
 
 export interface FailureContext {

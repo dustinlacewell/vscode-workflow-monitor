@@ -291,6 +291,8 @@
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.webview.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "icon": "node bin/build-icon.mjs",
     "package": "node bin/package-extension.mjs",
     "install:ext": "node bin/install-extension.mjs",
@@ -305,9 +307,11 @@
     "@resvg/resvg-js": "^2.6.2",
     "@types/node": "^22.7.5",
     "@types/vscode": "^1.95.0",
+    "@vitest/coverage-v8": "^4.1.4",
     "@vscode/vsce": "^3.2.1",
     "esbuild": "^0.24.0",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.4"
   },
   "extensionDependencies": [
     "vscode.git"

@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
-import type { Job, RunConclusion, RunStatus, Step, Workflow, WorkflowRun } from "../domain/types.js";
-import { hasFailed } from "../domain/types.js";
+import type { Job, RunConclusion, RunStatus, Step, Workflow, WorkflowRun } from "../core/domain/types.js";
+import { hasFailed } from "../core/domain/types.js";
 import { durationBetween, formatDuration, formatRelative } from "../util/format.js";
 
 /**

@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import * as vscode from "vscode";
 import type { GitHubApi } from "../data/github-api.js";
-import type { Artifact, RepoCoordinates } from "../domain/types.js";
+import type { Artifact, RepoCoordinates } from "../core/domain/types.js";
 
 /**
  * Thin wrapper around the artifacts API that adds VS Code specifics:
