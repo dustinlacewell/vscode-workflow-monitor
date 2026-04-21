@@ -10,18 +10,23 @@ import type { WorkflowStore } from "./workflow-store.js";
 export type ApiProvider = () => GitHubApi | null;
 
 /**
- * Fetches repo/environment secrets *on demand*. Unlike LiveSync, there's no
- * polling loop — secrets change rarely and each refresh costs one API call
- * per environment plus two for the repo/env lists. Instead:
+ * Fetches repo/environment secrets.
  *
- *   - `refresh()` performs a full fetch of everything (called on tree
- *     visibility + user refresh command + repo change).
- *   - `refreshScope(scope)` reloads just one scope (when the user expands
- *     an environment group the first time, to avoid fetching N env lists
- *     eagerly if they only care about one).
+ * No polling loop — secrets change rarely. But `refresh()` does fetch every
+ * scope *eagerly in parallel*, so by the time the user navigates into an
+ * environment the data is already cached. This is what keeps perceived
+ * latency at ~1 round-trip instead of 1-per-click.
  *
- * Failures feed the same AuthFailure banner as the main sync loop so the
- * "Missing scope" diagnostics work for secrets too.
+ * Triggers:
+ *   - `setRepo()` fires `refresh()` automatically the first time a real repo
+ *     resolves, so the data is ready by the time the user opens Settings.
+ *   - tree visibility change re-fires `refresh()` (cheap thanks to ETag).
+ *   - explicit `Refresh` title action.
+ *   - `refreshEnvironment()` is still exposed for after-write reloads of a
+ *     single scope (not used on first-expansion anymore).
+ *
+ * Failures feed the same AuthFailure banner as LiveSync, so "Missing scope"
+ * diagnostics work for secrets too.
  */
 export class SecretSync implements vscode.Disposable {
   private repo: RepoCoordinates | null = null;
@@ -40,11 +45,17 @@ export class SecretSync implements vscode.Disposable {
     this.repo = repo;
     this.abort?.abort();
     this.abort = null;
+    // Prefetch on repo resolution so the user isn't waiting when they open
+    // the Settings view. Subsequent repo changes also fire a refresh — stale
+    // data from a different repo would be worse than a brief loading state.
+    if (repo) void this.refresh();
   }
 
   /**
-   * Top-level refresh: list environments + repo secrets; environment-scoped
-   * secrets are deferred to first expansion via refreshScope().
+   * Full fetch: repo secrets + env list + every env's secrets, all in parallel.
+   * For a typical repo (2-5 environments) that's 4-7 concurrent calls, all of
+   * which ETag-cache beyond the first time, so a second `refresh()` is nearly
+   * free.
    */
   async refresh(): Promise<void> {
     if (this.disposed || this.inFlight) return;
@@ -64,10 +75,12 @@ export class SecretSync implements vscode.Disposable {
         api.listEnvironments(repo, ac.signal),
       ]);
       if (ac.signal.aborted) return;
-      // Order matters: setEnvironments flips status to "ready"; we want
-      // setSecrets to not reset lastUpdated unnecessarily.
       this.store.setEnvironments(environments);
       this.store.setSecrets({ kind: "repo" }, repoSecrets);
+
+      // Eager parallel fetch for every environment's secrets. Each failure
+      // is isolated — one env 403 shouldn't blank the whole tree.
+      await Promise.all(environments.map((env) => this.fetchEnvSecrets(api, repo, env.name, ac.signal)));
     } catch (err) {
       if (isAbort(err)) return;
       this.handleError(err);
@@ -77,6 +90,23 @@ export class SecretSync implements vscode.Disposable {
     }
   }
 
+  private async fetchEnvSecrets(
+    api: GitHubApi,
+    repo: RepoCoordinates,
+    envName: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    try {
+      const secrets = await api.listEnvironmentSecrets(repo, envName, signal);
+      if (signal.aborted) return;
+      this.store.setSecrets({ kind: "environment", name: envName }, secrets);
+    } catch (err) {
+      if (isAbort(err)) return;
+      this.log.warn(`listEnvironmentSecrets(${envName}) failed`, err);
+    }
+  }
+
+  /** Targeted reload for a single environment — used by post-write flows. */
   async refreshEnvironment(envName: string): Promise<void> {
     if (this.disposed) return;
     const api = this.apiProvider();
