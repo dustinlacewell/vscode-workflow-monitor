@@ -1,4 +1,4 @@
-import type { Artifact, WorkflowRun } from "../domain/types.js";
+import type { Artifact, Workflow, WorkflowRun } from "../domain/types.js";
 import type { StoreSnapshot } from "../store/snapshot.js";
 
 /**
@@ -60,4 +60,56 @@ function sortArtifacts(items: readonly Artifact[]): readonly Artifact[] {
     if (ta !== tb) return tb - ta;
     return a.name.localeCompare(b.name);
   });
+}
+
+/**
+ * Top-level Artifacts tree feeds off this. One group per run that
+ * (a) has artifact metadata cached and (b) produced at least one artifact —
+ * empty-but-fetched runs are silent so the tree doesn't become a cemetery of
+ * "no artifacts" rows.
+ *
+ * Groups are sorted by run id descending (newest first). Workflow name is
+ * bundled in so the tree can render "CI #42" without re-walking the store.
+ */
+export interface ArtifactRunGroup {
+  readonly run: WorkflowRun;
+  readonly workflowName: string;
+  readonly items: readonly Artifact[];
+}
+
+export type ArtifactGroupsView =
+  | { kind: "loading" } // no completed runs seen yet, or none fetched yet
+  | { kind: "empty" } // fetched, but no run has any artifacts
+  | { kind: "groups"; groups: readonly ArtifactRunGroup[] };
+
+export function selectArtifactGroups(snap: StoreSnapshot): ArtifactGroupsView {
+  const workflowById = new Map<number, Workflow>();
+  for (const w of snap.workflows) workflowById.set(w.id, w);
+
+  const groups: ArtifactRunGroup[] = [];
+  let completedSeen = 0;
+  let fetchedSeen = 0;
+
+  for (const runs of snap.runsByWorkflowId.values()) {
+    for (const run of runs) {
+      if (run.status !== "completed") continue;
+      completedSeen++;
+      const items = snap.artifactsByRunId.get(run.id);
+      if (items === undefined) continue;
+      fetchedSeen++;
+      if (items.length === 0) continue;
+      groups.push({
+        run,
+        workflowName: workflowById.get(run.workflowId)?.name ?? "Unknown workflow",
+        items: sortArtifacts(items),
+      });
+    }
+  }
+
+  if (completedSeen === 0) return { kind: "loading" };
+  if (fetchedSeen === 0) return { kind: "loading" };
+  if (groups.length === 0) return { kind: "empty" };
+
+  groups.sort((a, b) => b.run.id - a.run.id);
+  return { kind: "groups", groups };
 }

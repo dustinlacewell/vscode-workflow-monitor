@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { selectRunArtifacts, selectRunsMissingArtifacts } from "./artifacts.js";
-import { makeArtifact, makeRun, makeSnapshot } from "./test-fixtures.js";
+import { selectArtifactGroups, selectRunArtifacts, selectRunsMissingArtifacts } from "./artifacts.js";
+import { makeArtifact, makeRun, makeSnapshot, makeWorkflow } from "./test-fixtures.js";
 
 describe("selectRunArtifacts", () => {
   it("hidden when the run is still in flight", () => {
@@ -68,5 +68,58 @@ describe("selectRunsMissingArtifacts", () => {
       artifactsByRunId: new Map([[1, []]]),
     });
     expect(selectRunsMissingArtifacts(snap)).toEqual([]);
+  });
+});
+
+describe("selectArtifactGroups", () => {
+  it("loading when no completed runs exist yet", () => {
+    const run = makeRun({ id: 1, workflowId: 10, status: "in_progress" });
+    const snap = makeSnapshot({ runsByWorkflowId: new Map([[10, [run]]]) });
+    expect(selectArtifactGroups(snap)).toEqual({ kind: "loading" });
+  });
+
+  it("loading when completed runs exist but none have been fetched", () => {
+    const run = makeRun({ id: 1, workflowId: 10, status: "completed" });
+    const snap = makeSnapshot({ runsByWorkflowId: new Map([[10, [run]]]) });
+    expect(selectArtifactGroups(snap)).toEqual({ kind: "loading" });
+  });
+
+  it("empty when every fetched run produced zero artifacts", () => {
+    const run = makeRun({ id: 1, workflowId: 10, status: "completed" });
+    const snap = makeSnapshot({
+      runsByWorkflowId: new Map([[10, [run]]]),
+      artifactsByRunId: new Map([[1, []]]),
+    });
+    expect(selectArtifactGroups(snap)).toEqual({ kind: "empty" });
+  });
+
+  it("bundles run + workflow name + artifacts, newest run first", () => {
+    const wf = makeWorkflow({ id: 10, name: "CI" });
+    const r1 = makeRun({ id: 100, workflowId: 10, status: "completed" });
+    const r2 = makeRun({ id: 200, workflowId: 10, status: "completed" });
+    const a = makeArtifact({ id: 1, name: "bundle" });
+    const b = makeArtifact({ id: 2, name: "coverage" });
+    const snap = makeSnapshot({
+      workflows: [wf],
+      runsByWorkflowId: new Map([[10, [r1, r2]]]),
+      artifactsByRunId: new Map([[100, [a]], [200, [b]]]),
+    });
+    const v = selectArtifactGroups(snap);
+    if (v.kind !== "groups") throw new Error("expected groups");
+    expect(v.groups.map((g) => g.run.id)).toEqual([200, 100]);
+    expect(v.groups[0]!.workflowName).toBe("CI");
+  });
+
+  it("hides runs whose artifacts haven't been fetched from a mixed set", () => {
+    const r1 = makeRun({ id: 1, workflowId: 10, status: "completed" });
+    const r2 = makeRun({ id: 2, workflowId: 10, status: "completed" });
+    const a = makeArtifact({ id: 1, name: "x" });
+    const snap = makeSnapshot({
+      runsByWorkflowId: new Map([[10, [r1, r2]]]),
+      artifactsByRunId: new Map([[1, [a]]]), // r2 not yet fetched
+    });
+    const v = selectArtifactGroups(snap);
+    if (v.kind !== "groups") throw new Error("expected groups");
+    expect(v.groups.map((g) => g.run.id)).toEqual([1]);
   });
 });

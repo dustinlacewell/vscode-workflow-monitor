@@ -11,6 +11,7 @@ import { NotificationService, type NotificationConfig } from "./services/notific
 import { ViewStateService } from "./services/view-state.js";
 import { WorkflowDefinitionService } from "./services/workflow-definitions.js";
 import { WorkflowStore } from "./services/workflow-store.js";
+import { ArtifactsTreeProvider } from "./ui/artifacts-tree-provider.js";
 import { registerCommands } from "./ui/commands.js";
 import { LogWebviewService } from "./ui/log-webview-panel.js";
 import { StatusBar } from "./ui/status-bar.js";
@@ -61,6 +62,11 @@ export function activate(context: vscode.ExtensionContext): void {
     treeDataProvider: treeProvider,
     showCollapseAll: true,
   });
+  const artifactsTreeProvider = new ArtifactsTreeProvider(store);
+  const artifactsTreeView = vscode.window.createTreeView("workflowMonitor.artifacts", {
+    treeDataProvider: artifactsTreeProvider,
+    showCollapseAll: true,
+  });
   const statusBar = new StatusBar(store, readStatusBarEnabled());
   const updateBadge = () => {
     const count = selectInProgressRunCount(store.snapshot());
@@ -70,12 +76,13 @@ export function activate(context: vscode.ExtensionContext): void {
   };
   updateBadge();
   context.subscriptions.push(
-    treeProvider, treeView, statusBar,
+    treeProvider, treeView, artifactsTreeProvider, artifactsTreeView, statusBar,
     store.onDidChange(updateBadge),
     // Kick an immediate refresh when the user opens the sidebar — covers the
     // case where they return to the window after a long idle and want current
     // state without waiting for the idle timer.
     treeView.onDidChangeVisibility((e) => { if (e.visible) sync.refresh(); }),
+    artifactsTreeView.onDidChangeVisibility((e) => { if (e.visible) sync.refresh(); }),
   );
 
   // --- commands ----------------------------------------------------------

@@ -49,6 +49,12 @@
           "name": "Workflows",
           "icon": "$(github-action)",
           "contextualTitle": "GitHub Actions"
+        },
+        {
+          "id": "workflowMonitor.artifacts",
+          "name": "Artifacts",
+          "icon": "$(archive)",
+          "contextualTitle": "GitHub Actions"
         }
       ]
     },
@@ -56,6 +62,10 @@
       {
         "view": "workflowMonitor.workflows",
         "contents": "No GitHub repository detected in this workspace.\n[Sign in to GitHub](command:workflowMonitor.signIn)\n\nOpen a folder with a Git repository whose `origin` remote points at GitHub."
+      },
+      {
+        "view": "workflowMonitor.artifacts",
+        "contents": "No GitHub repository detected in this workspace.\n[Sign in to GitHub](command:workflowMonitor.signIn)"
       }
     ],
     "commands": [
@@ -223,13 +233,18 @@
         },
         {
           "command": "workflowMonitor.downloadArtifact",
-          "when": "view == workflowMonitor.workflows && viewItem == artifact",
+          "when": "(view == workflowMonitor.workflows || view == workflowMonitor.artifacts) && viewItem == artifact",
           "group": "inline@1"
         },
         {
           "command": "workflowMonitor.downloadArtifact",
-          "when": "view == workflowMonitor.workflows && viewItem == artifact",
+          "when": "(view == workflowMonitor.workflows || view == workflowMonitor.artifacts) && viewItem == artifact",
           "group": "1_actions@1"
+        },
+        {
+          "command": "workflowMonitor.openInBrowser",
+          "when": "view == workflowMonitor.artifacts && viewItem == artifacts-run-header",
+          "group": "inline@9"
         },
         {
           "command": "workflowMonitor.copyFailureContext",

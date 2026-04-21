@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import type { Artifact, Job, RunConclusion, RunStatus, Step, Workflow, WorkflowRun } from "../core/domain/types.js";
 import { hasFailed } from "../core/domain/types.js";
+import type { ArtifactRunGroup } from "../core/selectors/artifacts.js";
 import { durationBetween, formatDuration, formatRelative } from "../util/format.js";
 import { humanBytes } from "../services/artifact-service.js";
 
@@ -20,6 +21,7 @@ export type TreeNode =
   | JobNode
   | StepNode
   | ArtifactsGroupNode
+  | ArtifactsRunHeaderNode
   | ArtifactNode;
 
 export class MessageNode extends vscode.TreeItem {
@@ -102,6 +104,33 @@ export class ArtifactsGroupNode extends vscode.TreeItem {
       ? `Fetching artifacts for #${run.runNumber}…`
       : `${count} artifact${count === 1 ? "" : "s"} from run #${run.runNumber}`;
     this.contextValue = "artifacts-group";
+  }
+}
+
+/**
+ * Run-header row in the top-level Artifacts tree. Shows "CI #42" with
+ * branch + age as description and expands to the run's ArtifactNodes.
+ */
+export class ArtifactsRunHeaderNode extends vscode.TreeItem {
+  readonly kind = "artifacts-run-header" as const;
+  constructor(readonly group: ArtifactRunGroup) {
+    super(
+      `${group.workflowName} #${group.run.runNumber}`,
+      vscode.TreeItemCollapsibleState.Collapsed,
+    );
+    this.id = `artifacts-header:${group.run.id}`;
+    const parts: string[] = [`${group.items.length} artifact${group.items.length === 1 ? "" : "s"}`];
+    if (group.run.headBranch) parts.push(group.run.headBranch);
+    parts.push(formatRelative(group.run.runStartedAt ?? group.run.createdAt));
+    this.description = parts.join(" · ");
+    this.iconPath = new vscode.ThemeIcon("archive");
+    this.tooltip = new vscode.MarkdownString(
+      `**${group.workflowName}** run \`#${group.run.runNumber}\`\n\n`
+      + `- ${group.items.length} artifact${group.items.length === 1 ? "" : "s"}\n`
+      + (group.run.headBranch ? `- branch: \`${group.run.headBranch}\`\n` : "")
+      + `- completed: ${formatRelative(group.run.updatedAt)}\n`,
+    );
+    this.contextValue = "artifacts-run-header";
   }
 }
 
