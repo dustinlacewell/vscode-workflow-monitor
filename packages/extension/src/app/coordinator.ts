@@ -18,6 +18,8 @@ import type { Logger } from "../util/logger.js";
  * like. That means one audit trail for status transitions and no
  * cross-component race conditions.
  */
+const PUSH_BURST_MS = 30_000;
+
 export class AppCoordinator implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   private client: GitHubApi | null = null;
@@ -32,6 +34,10 @@ export class AppCoordinator implements vscode.Disposable {
     this.disposables.push(
       auth.onDidChange(() => this.reconcile()),
       repoWatcher.onDidChange(() => this.reconcile()),
+      repoWatcher.onDidPush(() => {
+        this.log.info("push detected → burst polling");
+        this.sync.burst(PUSH_BURST_MS);
+      }),
     );
   }
 

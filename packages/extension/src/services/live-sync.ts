@@ -33,6 +33,7 @@ export class LiveSync implements vscode.Disposable {
   private running = false;
   private disposed = false;
   private cycleInFlight = false;
+  private burstUntil = 0;
 
   constructor(
     private readonly apiProvider: ApiProvider,
@@ -68,6 +69,16 @@ export class LiveSync implements vscode.Disposable {
   refresh(): void {
     if (!this.running || this.disposed) return;
     this.scheduleNext(0);
+  }
+
+  /**
+   * Poll at active cadence for `durationMs`, then fall back to the normal
+   * active/idle decision. Used to catch the brief gap between a local push
+   * and the first visible run appearing in the GitHub API response.
+   */
+  burst(durationMs: number): void {
+    this.burstUntil = Date.now() + durationMs;
+    if (this.running) this.scheduleNext(0);
   }
 
   private restart(): void {
@@ -160,6 +171,7 @@ export class LiveSync implements vscode.Disposable {
   }
 
   private pickInterval(): number {
+    if (Date.now() < this.burstUntil) return this.config.activePollIntervalMs;
     return this.store.hasActiveRuns()
       ? this.config.activePollIntervalMs
       : this.config.idlePollIntervalMs;

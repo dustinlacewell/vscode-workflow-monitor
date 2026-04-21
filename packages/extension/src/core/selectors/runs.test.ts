@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { selectRunJobs, selectVisibleRuns, selectWorkflowRows, selectWorkflowRuns } from "./runs.js";
+import { selectInProgressRunCount, selectRunJobs, selectVisibleRuns, selectWorkflowRows, selectWorkflowRuns } from "./runs.js";
 import { makeJob, makeRun, makeSnapshot, makeWorkflow } from "./test-fixtures.js";
 
 describe("selectVisibleRuns", () => {
@@ -104,6 +104,32 @@ describe("selectWorkflowRuns", () => {
       branch: "main",
     });
     expect(selectWorkflowRuns(snap, 1, "current")).toEqual({ kind: "runs", runs: [r1] });
+  });
+});
+
+describe("selectInProgressRunCount", () => {
+  it("is 0 when no runs are cached", () => {
+    expect(selectInProgressRunCount(makeSnapshot())).toBe(0);
+  });
+
+  it("counts only active statuses across all workflows", () => {
+    const r1 = makeRun({ id: 1, workflowId: 10, status: "in_progress" });
+    const r2 = makeRun({ id: 2, workflowId: 10, status: "completed" });
+    const r3 = makeRun({ id: 3, workflowId: 20, status: "queued" });
+    const r4 = makeRun({ id: 4, workflowId: 20, status: "waiting" });
+    const snap = makeSnapshot({
+      runsByWorkflowId: new Map([[10, [r1, r2]], [20, [r3, r4]]]),
+    });
+    expect(selectInProgressRunCount(snap)).toBe(3);
+  });
+
+  it("ignores branch filter — badge reflects repo-wide activity", () => {
+    const r1 = makeRun({ id: 1, workflowId: 10, status: "in_progress", headBranch: "feat" });
+    const snap = makeSnapshot({
+      runsByWorkflowId: new Map([[10, [r1]]]),
+      branch: "main",
+    });
+    expect(selectInProgressRunCount(snap)).toBe(1);
   });
 });
 

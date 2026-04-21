@@ -4,6 +4,7 @@ import { GitRepoWatcher } from "./data/git-repo.js";
 import { ArtifactService } from "./services/artifact-service.js";
 import { AuthService } from "./services/auth.js";
 import { DiagnosticsService } from "./services/diagnostics-service.js";
+import { selectInProgressRunCount } from "./core/selectors/runs.js";
 import { LiveSync, type LiveSyncConfig } from "./services/live-sync.js";
 import { LogService } from "./services/log-service.js";
 import { NotificationService, type NotificationConfig } from "./services/notification-service.js";
@@ -61,7 +62,21 @@ export function activate(context: vscode.ExtensionContext): void {
     showCollapseAll: true,
   });
   const statusBar = new StatusBar(store, readStatusBarEnabled());
-  context.subscriptions.push(treeProvider, treeView, statusBar);
+  const updateBadge = () => {
+    const count = selectInProgressRunCount(store.snapshot());
+    treeView.badge = count > 0
+      ? { value: count, tooltip: `${count} workflow run${count === 1 ? "" : "s"} in progress` }
+      : undefined;
+  };
+  updateBadge();
+  context.subscriptions.push(
+    treeProvider, treeView, statusBar,
+    store.onDidChange(updateBadge),
+    // Kick an immediate refresh when the user opens the sidebar — covers the
+    // case where they return to the window after a long idle and want current
+    // state without waiting for the idle timer.
+    treeView.onDidChangeVisibility((e) => { if (e.visible) sync.refresh(); }),
+  );
 
   // --- commands ----------------------------------------------------------
   context.subscriptions.push(registerCommands({

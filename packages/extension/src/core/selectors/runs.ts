@@ -1,4 +1,5 @@
 import type { Job, Workflow, WorkflowRun } from "../domain/types.js";
+import { isActiveStatus } from "../domain/types.js";
 import type { StoreSnapshot } from "../store/snapshot.js";
 
 export type BranchFilter = "all" | "current";
@@ -61,6 +62,14 @@ export type RunJobsView =
   | { kind: "loading" }
   | { kind: "empty" }
   | { kind: "jobs"; jobs: readonly Job[] };
+
+export function selectInProgressRunCount(snap: StoreSnapshot): number {
+  let count = 0;
+  for (const runs of snap.runsByWorkflowId.values()) {
+    for (const run of runs) if (isActiveStatus(run.status)) count++;
+  }
+  return count;
+}
 
 export function selectRunJobs(snap: StoreSnapshot, runId: number): RunJobsView {
   const jobs = snap.jobsByRunId.get(runId);

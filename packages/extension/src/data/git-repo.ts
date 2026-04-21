@@ -47,13 +47,22 @@ export interface RepoContext {
  * Emits a new RepoContext whenever the active coordinates change (remote
  * reconfigured, workspace folder changed, branch switched, etc.).
  */
+interface BranchSnapshot {
+  readonly name: string;
+  readonly ahead: number;
+  readonly commit: string | null;
+}
+
 export class GitRepoWatcher implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   private readonly emitter = new vscode.EventEmitter<RepoContext | null>();
+  private readonly pushEmitter = new vscode.EventEmitter<void>();
+  private readonly lastBranch = new WeakMap<Repository, BranchSnapshot>();
   private api: GitAPI | null = null;
   private current: RepoContext | null = null;
 
   readonly onDidChange = this.emitter.event;
+  readonly onDidPush = this.pushEmitter.event;
 
   constructor(private readonly log: Logger) {}
 
@@ -80,7 +89,39 @@ export class GitRepoWatcher implements vscode.Disposable {
   }
 
   private hookRepository(repo: Repository): void {
-    this.disposables.push(repo.state.onDidChange(() => this.recompute()));
+    this.disposables.push(repo.state.onDidChange(() => {
+      this.detectPush(repo);
+      this.recompute();
+    }));
+  }
+
+  /**
+   * Fire onDidPush when the active branch's `ahead` counter drops to 0 from a
+   * non-zero value, or the HEAD commit SHA changes at ahead=0 (force-push).
+   * Only tracks the repo currently selected as the extension's target, so
+   * background repos don't generate noise.
+   */
+  private detectPush(repo: Repository): void {
+    if (this.current?.rootUri.toString() !== repo.rootUri.toString()) return;
+    const head = repo.state.HEAD;
+    const name = head?.name;
+    if (!name) return;
+    const next: BranchSnapshot = {
+      name,
+      ahead: head.ahead ?? 0,
+      commit: head.commit ?? null,
+    };
+    const prev = this.lastBranch.get(repo);
+    this.lastBranch.set(repo, next);
+
+    // Only interpret transitions within the same branch; branch switches are
+    // identity changes, not push events.
+    if (!prev || prev.name !== name) return;
+
+    const pushed =
+      (prev.ahead > 0 && next.ahead === 0) ||
+      (prev.ahead === 0 && next.ahead === 0 && prev.commit !== next.commit);
+    if (pushed) this.pushEmitter.fire();
   }
 
   private recompute(): void {
@@ -139,5 +180,6 @@ export class GitRepoWatcher implements vscode.Disposable {
   dispose(): void {
     this.disposables.forEach((d) => d.dispose());
     this.emitter.dispose();
+    this.pushEmitter.dispose();
   }
 }
