@@ -1,5 +1,8 @@
 import type { AuthFailure } from "../auth/failure.js";
+import type { Environment, Secret, SecretScope } from "../domain/secrets.js";
+import { scopeKey } from "../domain/secrets.js";
 import type { Artifact, Job, Workflow, WorkflowRun } from "../domain/types.js";
+import { EMPTY_SECRETS_SNAPSHOT, type SecretsSnapshot, type SecretsStatus } from "../store/secrets-snapshot.js";
 import type { StoreSnapshot, StoreStatus } from "../store/snapshot.js";
 
 export function makeWorkflow(partial: Partial<Workflow> & Pick<Workflow, "id" | "name">): Workflow {
@@ -63,6 +66,7 @@ export interface SnapshotOptions {
   artifactsByRunId?: ReadonlyMap<number, readonly Artifact[]>;
   errorMessage?: string | null;
   authFailure?: AuthFailure | null;
+  secrets?: SecretsSnapshot;
 }
 
 export function makeSnapshot(opts: SnapshotOptions = {}): StoreSnapshot {
@@ -76,6 +80,45 @@ export function makeSnapshot(opts: SnapshotOptions = {}): StoreSnapshot {
     artifactsByRunId: opts.artifactsByRunId ?? new Map(),
     errorMessage: opts.errorMessage ?? null,
     authFailure: opts.authFailure ?? null,
+    secrets: opts.secrets ?? EMPTY_SECRETS_SNAPSHOT,
+    lastUpdated: null,
+  };
+}
+
+export function makeSecret(partial: Partial<Secret> & Pick<Secret, "name">): Secret {
+  return {
+    scope: { kind: "repo" },
+    createdAt: "2026-04-01T00:00:00Z",
+    updatedAt: "2026-04-01T00:00:00Z",
+    ...partial,
+  };
+}
+
+export function makeEnvironment(partial: Partial<Environment> & Pick<Environment, "name">): Environment {
+  return {
+    htmlUrl: `https://github.com/o/r/deployments/${partial.name}`,
+    protectionRuleCount: 0,
+    createdAt: "2026-04-01T00:00:00Z",
+    updatedAt: "2026-04-01T00:00:00Z",
+    ...partial,
+  };
+}
+
+export interface SecretsSnapshotOptions {
+  status?: SecretsStatus;
+  environments?: readonly Environment[];
+  byScope?: ReadonlyArray<readonly [SecretScope, readonly Secret[]]>;
+  errorMessage?: string | null;
+}
+
+export function makeSecretsSnapshot(opts: SecretsSnapshotOptions = {}): SecretsSnapshot {
+  const map = new Map<string, readonly Secret[]>();
+  for (const [scope, list] of opts.byScope ?? []) map.set(scopeKey(scope), list);
+  return {
+    status: opts.status ?? "ready",
+    environments: opts.environments ?? [],
+    secretsByScope: map,
+    errorMessage: opts.errorMessage ?? null,
     lastUpdated: null,
   };
 }

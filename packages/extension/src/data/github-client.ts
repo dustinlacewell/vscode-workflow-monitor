@@ -1,5 +1,6 @@
 import { Octokit } from "@octokit/rest";
 import { RequestError } from "@octokit/request-error";
+import type { Environment, Secret } from "../core/domain/secrets.js";
 import type {
   Artifact,
   Job,
@@ -177,6 +178,39 @@ export class GitHubClient implements GitHubApi {
       repo: repo.repo,
       run_id: runId,
     });
+  }
+
+  async listRepoSecrets(repo: RepoCoordinates, signal?: AbortSignal): Promise<Secret[]> {
+    const key = `repoSecrets:${repo.owner}/${repo.repo}`;
+    const data = await this.conditionalGet<{ secrets: RawSecret[] }>(
+      key,
+      "GET /repos/{owner}/{repo}/actions/secrets",
+      { owner: repo.owner, repo: repo.repo, per_page: 100 },
+      signal,
+    );
+    return data.secrets.map((s) => mapSecret(s, { kind: "repo" }));
+  }
+
+  async listEnvironments(repo: RepoCoordinates, signal?: AbortSignal): Promise<Environment[]> {
+    const key = `environments:${repo.owner}/${repo.repo}`;
+    const data = await this.conditionalGet<{ environments?: RawEnvironment[] }>(
+      key,
+      "GET /repos/{owner}/{repo}/environments",
+      { owner: repo.owner, repo: repo.repo, per_page: 100 },
+      signal,
+    );
+    return (data.environments ?? []).map(mapEnvironment);
+  }
+
+  async listEnvironmentSecrets(repo: RepoCoordinates, env: string, signal?: AbortSignal): Promise<Secret[]> {
+    const key = `envSecrets:${repo.owner}/${repo.repo}:${env}`;
+    const data = await this.conditionalGet<{ secrets: RawSecret[] }>(
+      key,
+      "GET /repos/{owner}/{repo}/environments/{environment_name}/secrets",
+      { owner: repo.owner, repo: repo.repo, environment_name: env, per_page: 100 },
+      signal,
+    );
+    return data.secrets.map((s) => mapSecret(s, { kind: "environment", name: env }));
   }
 
   private async conditionalGet<T>(
@@ -391,6 +425,39 @@ function mapArtifact(raw: RawArtifact): Artifact {
     createdAt: raw.created_at,
     expiresAt: raw.expires_at,
     archiveDownloadUrl: raw.archive_download_url,
+  };
+}
+
+interface RawSecret {
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface RawEnvironment {
+  name: string;
+  html_url?: string | null;
+  created_at: string;
+  updated_at: string;
+  protection_rules?: unknown[];
+}
+
+function mapSecret(raw: RawSecret, scope: Secret["scope"]): Secret {
+  return {
+    name: raw.name,
+    scope,
+    createdAt: raw.created_at,
+    updatedAt: raw.updated_at,
+  };
+}
+
+function mapEnvironment(raw: RawEnvironment): Environment {
+  return {
+    name: raw.name,
+    htmlUrl: raw.html_url ?? null,
+    protectionRuleCount: Array.isArray(raw.protection_rules) ? raw.protection_rules.length : 0,
+    createdAt: raw.created_at,
+    updatedAt: raw.updated_at,
   };
 }
 

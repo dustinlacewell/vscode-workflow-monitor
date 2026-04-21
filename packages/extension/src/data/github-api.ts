@@ -1,3 +1,4 @@
+import type { Environment, Secret } from "../core/domain/secrets.js";
 import type { Artifact, Job, RepoCoordinates, Workflow, WorkflowRun } from "../core/domain/types.js";
 
 export interface RateLimitSnapshot {
@@ -34,6 +35,12 @@ export interface GitHubApi {
   rerunWorkflow(repo: RepoCoordinates, runId: number): Promise<void>;
   rerunFailedJobs(repo: RepoCoordinates, runId: number): Promise<void>;
   cancelRun(repo: RepoCoordinates, runId: number): Promise<void>;
+
+  // --- secrets (read only in v1) ------------------------------------------
+
+  listRepoSecrets(repo: RepoCoordinates, signal?: AbortSignal): Promise<Secret[]>;
+  listEnvironments(repo: RepoCoordinates, signal?: AbortSignal): Promise<Environment[]>;
+  listEnvironmentSecrets(repo: RepoCoordinates, env: string, signal?: AbortSignal): Promise<Secret[]>;
 }
 
 export interface GitHubApiErrorDetail {

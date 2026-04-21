@@ -1,7 +1,10 @@
 import * as vscode from "vscode";
 import type { AuthFailure } from "../core/auth/failure.js";
+import type { Environment, Secret, SecretScope } from "../core/domain/secrets.js";
+import { scopeKey } from "../core/domain/secrets.js";
 import type { Artifact, Job, JobContext, RepoCoordinates, Workflow, WorkflowRun } from "../core/domain/types.js";
 import { isActiveStatus } from "../core/domain/types.js";
+import { EMPTY_SECRETS_SNAPSHOT, type SecretsSnapshot, type SecretsStatus } from "../core/store/secrets-snapshot.js";
 import type { StoreSnapshot, StoreStatus } from "../core/store/snapshot.js";
 
 export type { StoreSnapshot, StoreStatus };
@@ -24,6 +27,7 @@ export class WorkflowStore implements vscode.Disposable {
     artifactsByRunId: new Map(),
     errorMessage: null,
     authFailure: null,
+    secrets: EMPTY_SECRETS_SNAPSHOT,
     lastUpdated: null,
   };
 
@@ -87,8 +91,44 @@ export class WorkflowStore implements vscode.Disposable {
       status: repo ? "loading" : "no-repo",
       errorMessage: null,
       authFailure: null,
+      secrets: EMPTY_SECRETS_SNAPSHOT,
     });
   }
+
+  // --- secrets ------------------------------------------------------------
+
+  setSecretsStatus(status: SecretsStatus, errorMessage: string | null = null): void {
+    this.update({ secrets: { ...this.snap.secrets, status, errorMessage } });
+  }
+
+  setEnvironments(environments: readonly Environment[]): void {
+    this.update({
+      secrets: {
+        ...this.snap.secrets,
+        environments,
+        status: "ready",
+        errorMessage: null,
+        lastUpdated: new Date(),
+      },
+    });
+  }
+
+  setSecrets(scope: SecretScope, secrets: readonly Secret[]): void {
+    const key = scopeKey(scope);
+    const next = new Map(this.snap.secrets.secretsByScope);
+    next.set(key, secrets);
+    this.update({
+      secrets: {
+        ...this.snap.secrets,
+        secretsByScope: next,
+        status: "ready",
+        errorMessage: null,
+        lastUpdated: new Date(),
+      },
+    });
+  }
+
+  getSecretsSnapshot(): SecretsSnapshot { return this.snap.secrets; }
 
   setWorkflows(workflows: readonly Workflow[]): void {
     this.update({ workflows, status: "ready", errorMessage: null, authFailure: null, lastUpdated: new Date() });

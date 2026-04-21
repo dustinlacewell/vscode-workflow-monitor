@@ -1,5 +1,6 @@
 import type { AuthFailure } from "../auth/failure.js";
 import type { Artifact, Job, RepoCoordinates, Workflow, WorkflowRun } from "../domain/types.js";
+import type { SecretsSnapshot } from "./secrets-snapshot.js";
 
 export type StoreStatus = "idle" | "loading" | "ready" | "error" | "unauthenticated" | "no-repo";
 
@@ -31,5 +32,12 @@ export interface StoreSnapshot {
    * view even after the status transitions back to "ready" briefly.
    */
   readonly authFailure: AuthFailure | null;
+  /**
+   * Secrets + environments state. Co-located on the snapshot so the tree
+   * providers subscribe to a single onDidChange, but its `status` field is
+   * independent of the workflows status — secrets fetch lifecycle is
+   * on-demand, not tied to the polling cycle.
+   */
+  readonly secrets: SecretsSnapshot;
   readonly lastUpdated: Date | null;
 }
