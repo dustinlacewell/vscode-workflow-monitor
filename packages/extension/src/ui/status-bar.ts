@@ -1,17 +1,13 @@
 import * as vscode from "vscode";
-import { isActiveStatus, type WorkflowRun } from "../core/domain/types.js";
+import type { BadgeView, BadgeVisualKind, PriorityBadge, PriorityReason } from "../core/selectors/status-bar.js";
+import { classifyBadgeVisual, selectBadge } from "../core/selectors/status-bar.js";
 import type { WorkflowStore } from "../services/workflow-store.js";
 import type { StoreSnapshot } from "../core/store/snapshot.js";
 
 /**
- * Status-bar badge reflecting (in priority order):
- *   1. any in-progress run — spinning icon;
- *   2. any run awaiting manual approval (`action_required`) — pulsing warning;
- *   3. the latest run on the current branch;
- *   4. the latest run anywhere.
- *
- * This layering keeps user attention on the most important state, rather
- * than always showing whatever shipped last.
+ * Status-bar badge. All "which run should this show?" logic lives in
+ * `core/selectors/status-bar.ts` as `selectBadge`; this class handles only
+ * the VS Code wiring — icons, colours, the pulse timer, and tooltip markup.
  */
 export class StatusBar implements vscode.Disposable {
   private readonly item: vscode.StatusBarItem;
@@ -38,31 +34,40 @@ export class StatusBar implements vscode.Disposable {
   }
 
   private render(snap: StoreSnapshot): void {
-    if (!this.enabled) { this.item.hide(); return; }
-    if (!snap.repo || snap.status === "no-repo") { this.item.hide(); return; }
+    if (!this.enabled) { this.stopPulse(); this.item.hide(); return; }
+    const view = selectBadge(snap);
+    this.applyBadge(view);
+  }
 
-    const priority = findPriorityRun(snap);
-    if (!priority) {
-      this.stopPulse();
-      this.item.text = "$(github-action) Actions";
-      this.item.tooltip = `${snap.repo.owner}/${snap.repo.repo} · no runs yet`;
-      this.item.backgroundColor = undefined;
-      this.item.show();
-      return;
+  private applyBadge(view: BadgeView): void {
+    switch (view.kind) {
+      case "hidden":
+        this.stopPulse();
+        this.item.hide();
+        return;
+      case "idle":
+        this.stopPulse();
+        this.item.text = "$(github-action) Actions";
+        this.item.tooltip = `${view.repo.owner}/${view.repo.repo} · no runs yet`;
+        this.item.backgroundColor = undefined;
+        this.item.show();
+        return;
+      case "priority":
+        this.applyPriority(view);
+        return;
     }
+  }
 
-    const visuals = visualsFor(priority);
-    const branch = priority.headBranch ? ` ${priority.headBranch}` : "";
-    const prefix = visuals.prefix ?? "";
-    const labelBase = `${visuals.icon} ${prefix}#${priority.runNumber}${branch}`.trim();
-
-    if (visuals.pulse) this.startPulse(labelBase, visuals);
+  private applyPriority(view: PriorityBadge): void {
+    const visuals = visualsFor(view);
+    const label = buildLabel(view, visuals);
+    if (visuals.pulse) this.startPulse(label, visuals);
     else {
       this.stopPulse();
-      this.item.text = labelBase;
+      this.item.text = label;
     }
     this.item.backgroundColor = visuals.bgColor;
-    this.item.tooltip = buildTooltip(snap, priority, visuals);
+    this.item.tooltip = buildTooltip(view, visuals);
     this.item.show();
   }
 
@@ -90,32 +95,6 @@ export class StatusBar implements vscode.Disposable {
   }
 }
 
-// --- selection -------------------------------------------------------------
-
-function findPriorityRun(snap: StoreSnapshot): WorkflowRun | null {
-  const allRuns: WorkflowRun[] = [];
-  for (const runs of snap.runsByWorkflowId.values()) allRuns.push(...runs);
-  if (allRuns.length === 0) return null;
-
-  // 1. action_required (needs attention NOW)
-  const actionReq = allRuns.find((r) => r.conclusion === "action_required");
-  if (actionReq) return actionReq;
-
-  // 2. any in-progress run
-  const inProgress = allRuns.find((r) => isActiveStatus(r.status));
-  if (inProgress) return inProgress;
-
-  // 3/4. latest on current branch, else latest overall.
-  let best: WorkflowRun | null = null;
-  for (const r of allRuns) {
-    if (snap.branch && r.headBranch !== snap.branch) continue;
-    if (!best || r.id > best.id) best = r;
-  }
-  if (best) return best;
-  for (const r of allRuns) if (!best || r.id > best.id) best = r;
-  return best;
-}
-
 // --- visuals ---------------------------------------------------------------
 
 interface Visuals {
@@ -126,45 +105,64 @@ interface Visuals {
   bgColor: vscode.ThemeColor | undefined;
 }
 
-function visualsFor(run: WorkflowRun): Visuals {
-  if (run.conclusion === "action_required") {
-    return {
-      icon: "$(warning)",
-      altIcon: "$(circle-large-outline)",
-      prefix: "action needed · ",
-      pulse: true,
-      bgColor: new vscode.ThemeColor("statusBarItem.warningBackground"),
-    };
-  }
-  if (isActiveStatus(run.status)) {
-    return { icon: "$(sync~spin)", pulse: false, bgColor: undefined };
-  }
-  if (run.status !== "completed") {
-    return { icon: "$(circle-outline)", pulse: false, bgColor: undefined };
-  }
-  switch (run.conclusion) {
-    case "success":
-      return { icon: "$(pass-filled)", pulse: false, bgColor: undefined };
-    case "failure":
-    case "startup_failure":
-    case "timed_out":
-      return { icon: "$(error)", pulse: false, bgColor: new vscode.ThemeColor("statusBarItem.errorBackground") };
-    case "cancelled":
-      return { icon: "$(circle-slash)", pulse: false, bgColor: undefined };
-    case "skipped":
-      return { icon: "$(debug-step-over)", pulse: false, bgColor: undefined };
-    default:
-      return { icon: "$(circle-outline)", pulse: false, bgColor: undefined };
-  }
+function visualsFor(view: PriorityBadge): Visuals {
+  const kind = view.reason === "action-required"
+    ? "action-required"
+    : classifyBadgeVisual(view.run.status, view.run.conclusion);
+  return VISUALS[kind];
 }
 
-function buildTooltip(snap: StoreSnapshot, run: WorkflowRun, visuals: Visuals): vscode.MarkdownString {
+const VISUALS: Record<BadgeVisualKind, Visuals> = {
+  "action-required": {
+    icon: "$(warning)",
+    altIcon: "$(circle-large-outline)",
+    prefix: "action needed · ",
+    pulse: true,
+    bgColor: new vscode.ThemeColor("statusBarItem.warningBackground"),
+  },
+  "in-progress": { icon: "$(sync~spin)", pulse: false, bgColor: undefined },
+  "pending": { icon: "$(clock)", pulse: false, bgColor: undefined },
+  "success": { icon: "$(pass-filled)", pulse: false, bgColor: undefined },
+  "failure": {
+    icon: "$(error)",
+    pulse: false,
+    bgColor: new vscode.ThemeColor("statusBarItem.errorBackground"),
+  },
+  "cancelled": { icon: "$(circle-slash)", pulse: false, bgColor: undefined },
+  "skipped": { icon: "$(debug-step-over)", pulse: false, bgColor: undefined },
+  "unknown": { icon: "$(circle-outline)", pulse: false, bgColor: undefined },
+};
+
+function buildLabel(view: PriorityBadge, visuals: Visuals): string {
+  const branch = view.run.headBranch ? ` ${view.run.headBranch}` : "";
+  const prefix = visuals.prefix ?? "";
+  const base = `${visuals.icon} ${prefix}#${view.run.runNumber}${branch}`.trim();
+  return view.inProgressCount > 1 ? `${base} +${view.inProgressCount - 1}` : base;
+}
+
+function buildTooltip(view: PriorityBadge, visuals: Visuals): vscode.MarkdownString {
   const md = new vscode.MarkdownString();
-  if (visuals.pulse) md.appendMarkdown(`### ⚠ ${snap.repo!.owner}/${snap.repo!.repo}: action required\n\n`);
-  else md.appendMarkdown(`**${snap.repo!.owner}/${snap.repo!.repo}**\n\n`);
-  md.appendMarkdown(`- run: \`#${run.runNumber}\`\n`);
-  md.appendMarkdown(`- status: \`${run.status}\`${run.conclusion ? ` (\`${run.conclusion}\`)` : ""}\n`);
-  if (run.headBranch) md.appendMarkdown(`- branch: \`${run.headBranch}\`\n`);
-  md.appendMarkdown(`- event: \`${run.event}\`\n`);
+  if (visuals.pulse) {
+    md.appendMarkdown(`### ⚠ ${view.repo.owner}/${view.repo.repo}: action required\n\n`);
+  } else {
+    md.appendMarkdown(`**${view.repo.owner}/${view.repo.repo}**\n\n`);
+  }
+  md.appendMarkdown(`- run: \`#${view.run.runNumber}\`\n`);
+  md.appendMarkdown(`- status: \`${view.run.status}\`${view.run.conclusion ? ` (\`${view.run.conclusion}\`)` : ""}\n`);
+  if (view.run.headBranch) md.appendMarkdown(`- branch: \`${view.run.headBranch}\`\n`);
+  md.appendMarkdown(`- event: \`${view.run.event}\`\n`);
+  md.appendMarkdown(`- shown because: ${reasonLabel(view.reason)}\n`);
+  if (view.inProgressCount > 0) {
+    md.appendMarkdown(`- in-progress runs: **${view.inProgressCount}**\n`);
+  }
   return md;
+}
+
+function reasonLabel(reason: PriorityReason): string {
+  switch (reason) {
+    case "action-required": return "run is awaiting manual approval";
+    case "in-progress":     return "run is actively running";
+    case "on-branch":       return "latest run on the current branch";
+    case "latest":          return "latest run in the repository";
+  }
 }

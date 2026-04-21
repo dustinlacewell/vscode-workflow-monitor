@@ -14,9 +14,17 @@ import { packageExtension } from "./package-extension.mjs";
 const vsixPath = packageExtension();
 const cli = resolveCodeCli();
 
+// Node >=18.20.2 / 20.12.2 / 22.0.0 rejects .cmd/.bat in execFile without shell: true
+// (CVE-2024-27980 mitigation). On Windows the resolved CLI is typically code.cmd.
+const needsShell = /\.(cmd|bat)$/i.test(cli);
+
 try {
   process.stdout.write(`\n> ${cli} --install-extension "${vsixPath}" --force\n`);
-  execFileSync(cli, ["--install-extension", vsixPath, "--force"], { stdio: "inherit" });
+  if (needsShell) {
+    execSync(`"${cli}" --install-extension "${vsixPath}" --force`, { stdio: "inherit" });
+  } else {
+    execFileSync(cli, ["--install-extension", vsixPath, "--force"], { stdio: "inherit" });
+  }
 } catch {
   process.stderr.write(`\nFailed to run the VS Code CLI.\n`);
   process.stderr.write(`The built package is at: ${vsixPath}\n`);
