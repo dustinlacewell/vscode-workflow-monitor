@@ -51,15 +51,9 @@
           "contextualTitle": "GitHub Actions"
         },
         {
-          "id": "workflowMonitor.artifacts",
-          "name": "Artifacts",
-          "icon": "$(archive)",
-          "contextualTitle": "GitHub Actions"
-        },
-        {
-          "id": "workflowMonitor.secrets",
-          "name": "Secrets",
-          "icon": "$(lock)",
+          "id": "workflowMonitor.settings",
+          "name": "Settings",
+          "icon": "$(settings-gear)",
           "contextualTitle": "GitHub Actions"
         }
       ]
@@ -70,12 +64,8 @@
         "contents": "No GitHub repository detected in this workspace.\n[Sign in to GitHub](command:workflowMonitor.signIn)\n\nOpen a folder with a Git repository whose `origin` remote points at GitHub."
       },
       {
-        "view": "workflowMonitor.artifacts",
-        "contents": "No GitHub repository detected in this workspace.\n[Sign in to GitHub](command:workflowMonitor.signIn)"
-      },
-      {
-        "view": "workflowMonitor.secrets",
-        "contents": "No GitHub repository detected in this workspace.\n[Sign in to GitHub](command:workflowMonitor.signIn)\n\nSecret metadata (names, timestamps, scopes) is listed here. GitHub never returns values, so they cannot be displayed."
+        "view": "workflowMonitor.settings",
+        "contents": "No GitHub repository detected in this workspace.\n[Sign in to GitHub](command:workflowMonitor.signIn)\n\nEnvironments, secrets, and variables will appear here once signed in.\n\nSecret values are never exposed by GitHub's API — only names and metadata are listed."
       }
     ],
     "commands": [
@@ -213,7 +203,7 @@
         },
         {
           "command": "workflowMonitor.refreshSecrets",
-          "when": "view == workflowMonitor.secrets",
+          "when": "view == workflowMonitor.settings",
           "group": "navigation@1"
         }
       ],
@@ -260,18 +250,13 @@
         },
         {
           "command": "workflowMonitor.downloadArtifact",
-          "when": "(view == workflowMonitor.workflows || view == workflowMonitor.artifacts) && viewItem == artifact",
+          "when": "view == workflowMonitor.workflows && viewItem == artifact",
           "group": "inline@1"
         },
         {
           "command": "workflowMonitor.downloadArtifact",
-          "when": "(view == workflowMonitor.workflows || view == workflowMonitor.artifacts) && viewItem == artifact",
+          "when": "view == workflowMonitor.workflows && viewItem == artifact",
           "group": "1_actions@1"
-        },
-        {
-          "command": "workflowMonitor.openInBrowser",
-          "when": "view == workflowMonitor.artifacts && viewItem == artifacts-run-header",
-          "group": "inline@9"
         },
         {
           "command": "workflowMonitor.copyFailureContext",
@@ -295,12 +280,12 @@
         },
         {
           "command": "workflowMonitor.copySecretName",
-          "when": "view == workflowMonitor.secrets && viewItem == secret",
+          "when": "view == workflowMonitor.settings && viewItem == secret",
           "group": "inline@1"
         },
         {
           "command": "workflowMonitor.copySecretName",
-          "when": "view == workflowMonitor.secrets && viewItem == secret",
+          "when": "view == workflowMonitor.settings && viewItem == secret",
           "group": "1_actions@1"
         }
       ],

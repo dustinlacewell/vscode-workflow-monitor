@@ -12,10 +12,9 @@ import { SecretSync } from "./services/secret-sync.js";
 import { ViewStateService } from "./services/view-state.js";
 import { WorkflowDefinitionService } from "./services/workflow-definitions.js";
 import { WorkflowStore } from "./services/workflow-store.js";
-import { ArtifactsTreeProvider } from "./ui/artifacts-tree-provider.js";
 import { registerCommands } from "./ui/commands.js";
 import { LogWebviewService } from "./ui/log-webview-panel.js";
-import { SecretsTreeProvider } from "./ui/secrets-tree-provider.js";
+import { SettingsTreeProvider } from "./ui/settings-tree-provider.js";
 import { StatusBar } from "./ui/status-bar.js";
 import { WorkflowsTreeProvider } from "./ui/tree-provider.js";
 import { createLogger } from "./util/logger.js";
@@ -71,14 +70,9 @@ export function activate(context: vscode.ExtensionContext): void {
     treeDataProvider: treeProvider,
     showCollapseAll: true,
   });
-  const artifactsTreeProvider = new ArtifactsTreeProvider(store);
-  const artifactsTreeView = vscode.window.createTreeView("workflowMonitor.artifacts", {
-    treeDataProvider: artifactsTreeProvider,
-    showCollapseAll: true,
-  });
-  const secretsTreeProvider = new SecretsTreeProvider(store, secretSync);
-  const secretsTreeView = vscode.window.createTreeView("workflowMonitor.secrets", {
-    treeDataProvider: secretsTreeProvider,
+  const settingsTreeProvider = new SettingsTreeProvider(store, secretSync);
+  const settingsTreeView = vscode.window.createTreeView("workflowMonitor.settings", {
+    treeDataProvider: settingsTreeProvider,
     showCollapseAll: true,
   });
   const statusBar = new StatusBar(store, readStatusBarEnabled());
@@ -90,19 +84,17 @@ export function activate(context: vscode.ExtensionContext): void {
   };
   updateBadge();
   context.subscriptions.push(
-    treeProvider, treeView, artifactsTreeProvider, artifactsTreeView, statusBar,
-    secretsTreeProvider, secretsTreeView,
+    treeProvider, treeView, settingsTreeProvider, settingsTreeView, statusBar,
     store.onDidChange(updateBadge),
     // Kick an immediate refresh when the user opens the sidebar — covers the
     // case where they return to the window after a long idle and want current
     // state without waiting for the idle timer.
     treeView.onDidChangeVisibility((e) => { if (e.visible) sync.refresh(); }),
-    artifactsTreeView.onDidChangeVisibility((e) => { if (e.visible) sync.refresh(); }),
-    // Secrets don't polling-refresh. Fire once when the tree first appears,
+    // Settings doesn't polling-refresh. Fire once when the tree first appears,
     // and re-fire on repo change (secretSync.setRepo clears state for us).
-    secretsTreeView.onDidChangeVisibility((e) => {
+    settingsTreeView.onDidChangeVisibility((e) => {
       if (!e.visible) return;
-      secretsTreeProvider.resetLazyLoads();
+      settingsTreeProvider.resetLazyLoads();
       void secretSync.refresh();
     }),
   );

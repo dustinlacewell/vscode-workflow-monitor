@@ -1,8 +1,7 @@
 import * as vscode from "vscode";
-import type { Secret, SecretScope } from "../core/domain/secrets.js";
-import type { Artifact, Job, RunConclusion, RunStatus, Step, Workflow, WorkflowRun } from "../core/domain/types.js";
+import type { Environment, Secret, SecretScope } from "../core/domain/secrets.js";
+import type { Artifact, Job, RepoCoordinates, RunConclusion, RunStatus, Step, Workflow, WorkflowRun } from "../core/domain/types.js";
 import { hasFailed } from "../core/domain/types.js";
-import type { ArtifactRunGroup } from "../core/selectors/artifacts.js";
 import type { SecretGroup } from "../core/selectors/secrets.js";
 import { durationBetween, formatDuration, formatRelative } from "../util/format.js";
 import { humanBytes } from "../services/artifact-service.js";
@@ -23,8 +22,10 @@ export type TreeNode =
   | JobNode
   | StepNode
   | ArtifactsGroupNode
-  | ArtifactsRunHeaderNode
   | ArtifactNode
+  | SettingsRepoNode
+  | SettingsSectionNode
+  | EnvironmentNode
   | SecretScopeGroupNode
   | SecretNode;
 
@@ -111,33 +112,6 @@ export class ArtifactsGroupNode extends vscode.TreeItem {
   }
 }
 
-/**
- * Run-header row in the top-level Artifacts tree. Shows "CI #42" with
- * branch + age as description and expands to the run's ArtifactNodes.
- */
-export class ArtifactsRunHeaderNode extends vscode.TreeItem {
-  readonly kind = "artifacts-run-header" as const;
-  constructor(readonly group: ArtifactRunGroup) {
-    super(
-      `${group.workflowName} #${group.run.runNumber}`,
-      vscode.TreeItemCollapsibleState.Collapsed,
-    );
-    this.id = `artifacts-header:${group.run.id}`;
-    const parts: string[] = [`${group.items.length} artifact${group.items.length === 1 ? "" : "s"}`];
-    if (group.run.headBranch) parts.push(group.run.headBranch);
-    parts.push(formatRelative(group.run.runStartedAt ?? group.run.createdAt));
-    this.description = parts.join(" · ");
-    this.iconPath = new vscode.ThemeIcon("archive");
-    this.tooltip = new vscode.MarkdownString(
-      `**${group.workflowName}** run \`#${group.run.runNumber}\`\n\n`
-      + `- ${group.items.length} artifact${group.items.length === 1 ? "" : "s"}\n`
-      + (group.run.headBranch ? `- branch: \`${group.run.headBranch}\`\n` : "")
-      + `- completed: ${formatRelative(group.run.updatedAt)}\n`,
-    );
-    this.contextValue = "artifacts-run-header";
-  }
-}
-
 export class ArtifactNode extends vscode.TreeItem {
   readonly kind = "artifact" as const;
   constructor(readonly run: WorkflowRun, readonly artifact: Artifact) {
@@ -183,6 +157,76 @@ export class StepNode extends vscode.TreeItem {
     this.iconPath = iconForStatus(step.status, step.conclusion);
     this.contextValue = `step${failSuffix(step)}`;
     this.command = { command: "workflowMonitor.viewJobLog", title: "View Job Log", arguments: [this] };
+  }
+}
+
+// --- settings --------------------------------------------------------------
+
+export type SettingsSectionKind = "environments" | "secrets" | "variables";
+
+/**
+ * Top-level node in the Settings tree — one per repo in the workspace.
+ * For v1 we only track a single repo but the shape is ready for the
+ * multi-repo workspace case (just list several under the root).
+ */
+export class SettingsRepoNode extends vscode.TreeItem {
+  readonly kind = "settings-repo" as const;
+  constructor(readonly repo: RepoCoordinates) {
+    super(`${repo.owner}/${repo.repo}`, vscode.TreeItemCollapsibleState.Expanded);
+    this.id = `settings-repo:${repo.owner}/${repo.repo}`;
+    this.iconPath = new vscode.ThemeIcon("repo");
+    this.contextValue = "settings-repo";
+  }
+}
+
+/**
+ * Mid-level node for each configuration dimension (Environments / Secrets /
+ * Variables). The tree provider decides what to render underneath based on
+ * `section`.
+ */
+export class SettingsSectionNode extends vscode.TreeItem {
+  readonly kind = "settings-section" as const;
+  constructor(readonly section: SettingsSectionKind, count?: number | "loading") {
+    super(SECTION_LABEL[section], vscode.TreeItemCollapsibleState.Collapsed);
+    this.id = `settings-section:${section}`;
+    if (count === "loading") this.description = "loading…";
+    else if (typeof count === "number") this.description = `${count}`;
+    this.iconPath = new vscode.ThemeIcon(SECTION_ICON[section]);
+    this.contextValue = `settings-section-${section}`;
+  }
+}
+
+const SECTION_LABEL: Record<SettingsSectionKind, string> = {
+  environments: "Environments",
+  secrets: "Secrets",
+  variables: "Variables",
+};
+
+const SECTION_ICON: Record<SettingsSectionKind, string> = {
+  environments: "rocket",
+  secrets: "lock",
+  variables: "symbol-string",
+};
+
+export class EnvironmentNode extends vscode.TreeItem {
+  readonly kind = "environment" as const;
+  constructor(readonly environment: Environment) {
+    super(environment.name, vscode.TreeItemCollapsibleState.None);
+    this.id = `environment:${environment.name}`;
+    const parts: string[] = [];
+    if (environment.protectionRuleCount > 0) {
+      parts.push(`${environment.protectionRuleCount} protection rule${environment.protectionRuleCount === 1 ? "" : "s"}`);
+    }
+    parts.push(`updated ${formatRelative(environment.updatedAt)}`);
+    this.description = parts.join(" · ");
+    this.iconPath = new vscode.ThemeIcon("rocket");
+    this.tooltip = new vscode.MarkdownString(
+      `**${environment.name}**\n\n`
+      + `- protection rules: ${environment.protectionRuleCount}\n`
+      + `- created: ${formatRelative(environment.createdAt)}\n`
+      + `- updated: ${formatRelative(environment.updatedAt)}\n`,
+    );
+    this.contextValue = "environment";
   }
 }
 

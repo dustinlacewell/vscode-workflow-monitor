@@ -16,7 +16,7 @@ import type { LiveSync } from "../services/live-sync.js";
 import type { Logger } from "../util/logger.js";
 import type { LogWebviewService } from "./log-webview-panel.js";
 import { promptDispatchInputs } from "./prompts.js";
-import { ArtifactNode, ArtifactsRunHeaderNode, JobNode, RunNode, SecretNode, StepNode, WorkflowNode } from "./tree-items.js";
+import { ArtifactNode, JobNode, RunNode, SecretNode, StepNode, WorkflowNode } from "./tree-items.js";
 
 type Handler = (...args: unknown[]) => unknown | Promise<unknown>;
 
@@ -407,7 +407,6 @@ function pickNodeUrl(node: unknown, store: WorkflowStore): string | null {
   if (node instanceof RunNode) return node.run.htmlUrl;
   if (node instanceof JobNode) return node.job.htmlUrl;
   if (node instanceof StepNode) return node.job.htmlUrl;
-  if (node instanceof ArtifactsRunHeaderNode) return node.group.run.htmlUrl;
   const snap = store.snapshot();
   for (const runs of snap.runsByWorkflowId.values()) {
     if (runs[0]) return runs[0].htmlUrl;
