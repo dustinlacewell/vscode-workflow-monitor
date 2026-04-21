@@ -15,8 +15,8 @@ import type { WorkflowStore } from "../services/workflow-store.js";
 import type { LiveSync } from "../services/live-sync.js";
 import type { Logger } from "../util/logger.js";
 import type { LogWebviewService } from "./log-webview-panel.js";
-import { promptDispatchInputs, promptSecretName, promptSecretValue } from "./prompts.js";
-import { ArtifactNode, EnvironmentNode, EnvironmentSubsectionNode, JobNode, RunNode, SecretNode, SettingsSectionNode, StepNode, WorkflowNode } from "./tree-items.js";
+import { promptDispatchInputs, promptSecretName, promptSecretValue, promptVariableName, promptVariableValue } from "./prompts.js";
+import { ArtifactNode, EnvironmentNode, EnvironmentSubsectionNode, JobNode, RunNode, SecretNode, SettingsSectionNode, StepNode, VariableNode, WorkflowNode } from "./tree-items.js";
 import type { SecretScope } from "../core/domain/secrets.js";
 
 type Handler = (...args: unknown[]) => unknown | Promise<unknown>;
@@ -59,6 +59,7 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable {
     ...artifactCommands(deps),
     ...diagnosticsCommands(deps),
     ...secretsCommands(deps),
+    ...variablesCommands(deps),
   ];
   const subs = defs.map((d) => vscode.commands.registerCommand(d.id, d.handler));
   return vscode.Disposable.from(...subs);
@@ -273,7 +274,7 @@ function secretsCommands(deps: CommandDeps): CommandDef[] {
     {
       id: "workflowMonitor.addSecret",
       handler: async (node: unknown) => {
-        const scope = scopeFromAddContext(node);
+        const scope = scopeFromAddContext(node, "secrets");
         if (!scope) return;
         const takenNames = collectTakenNames(deps, scope);
         const name = await promptSecretName({ scopeLabel: scopeLabel(scope), taken: takenNames });
@@ -329,21 +330,92 @@ function secretsCommands(deps: CommandDeps): CommandDef[] {
   ];
 }
 
+// --- variables -------------------------------------------------------------
+
+function variablesCommands(deps: CommandDeps): CommandDef[] {
+  return [
+    {
+      id: "workflowMonitor.copyVariableValue",
+      handler: async (node: unknown) => {
+        if (!(node instanceof VariableNode)) return;
+        await vscode.env.clipboard.writeText(node.variable.value);
+        vscode.window.setStatusBarMessage(`Copied value of "${node.variable.name}"`, 2000);
+      },
+    },
+    {
+      id: "workflowMonitor.addVariable",
+      handler: async (node: unknown) => {
+        const scope = scopeFromAddContext(node, "variables");
+        if (!scope) return;
+        const taken = collectTakenVariableNames(deps, scope);
+        const name = await promptVariableName({ scopeLabel: scopeLabel(scope), taken });
+        if (name === null) return;
+        const value = await promptVariableValue({
+          title: `New variable — ${scopeLabel(scope)} · ${name}`,
+        });
+        if (value === null) return;
+        try {
+          await deps.secretSync.writeVariable(scope, name, value, false);
+          vscode.window.showInformationMessage(`Saved variable "${name}" to ${scopeLabel(scope)}.`);
+        } catch (err) {
+          vscode.window.showErrorMessage(`Failed to save variable: ${errMsg(err)}`);
+        }
+      },
+    },
+    {
+      id: "workflowMonitor.updateVariable",
+      handler: async (node: unknown) => {
+        if (!(node instanceof VariableNode)) return;
+        const value = await promptVariableValue({
+          title: `Update variable — ${scopeLabel(node.scope)} · ${node.variable.name}`,
+          current: node.variable.value,
+        });
+        if (value === null) return;
+        if (value === node.variable.value) return; // no-op
+        try {
+          await deps.secretSync.writeVariable(node.scope, node.variable.name, value, true);
+          vscode.window.showInformationMessage(`Updated "${node.variable.name}".`);
+        } catch (err) {
+          vscode.window.showErrorMessage(`Failed to update variable: ${errMsg(err)}`);
+        }
+      },
+    },
+    {
+      id: "workflowMonitor.deleteVariable",
+      handler: async (node: unknown) => {
+        if (!(node instanceof VariableNode)) return;
+        const confirm = await vscode.window.showWarningMessage(
+          `Delete variable "${node.variable.name}" from ${scopeLabel(node.scope)}? This cannot be undone.`,
+          { modal: true },
+          "Delete",
+        );
+        if (confirm !== "Delete") return;
+        try {
+          await deps.secretSync.deleteVariable(node.scope, node.variable.name);
+          vscode.window.showInformationMessage(`Deleted "${node.variable.name}".`);
+        } catch (err) {
+          vscode.window.showErrorMessage(`Failed to delete variable: ${errMsg(err)}`);
+        }
+      },
+    },
+  ];
+}
+
 /**
  * Map the node a user right-clicked (or hit an inline "+" on) to the scope
  * we should write to. Accepts:
- *   - top-level `Secrets` section → repo scope
+ *   - top-level `Secrets`/`Variables` section → repo scope
  *   - an environment row → env scope (add from the env header)
- *   - an environment's `Secrets` subsection → env scope
+ *   - an environment's `Secrets`/`Variables` subsection → env scope
  */
-function scopeFromAddContext(node: unknown): SecretScope | null {
-  if (node instanceof SettingsSectionNode && node.section === "secrets") {
+function scopeFromAddContext(node: unknown, kind: "secrets" | "variables"): SecretScope | null {
+  if (node instanceof SettingsSectionNode && node.section === kind) {
     return { kind: "repo" };
   }
   if (node instanceof EnvironmentNode) {
     return { kind: "environment", name: node.environment.name };
   }
-  if (node instanceof EnvironmentSubsectionNode && node.section === "secrets") {
+  if (node instanceof EnvironmentSubsectionNode && node.section === kind) {
     return { kind: "environment", name: node.environment.name };
   }
   return null;
@@ -357,6 +429,12 @@ function collectTakenNames(deps: CommandDeps, scope: SecretScope): readonly stri
   const snap = deps.store.getSecretsSnapshot();
   const key = scope.kind === "repo" ? "repo" : `env:${scope.name}`;
   return snap.secretsByScope.get(key)?.map((s) => s.name) ?? [];
+}
+
+function collectTakenVariableNames(deps: CommandDeps, scope: SecretScope): readonly string[] {
+  const snap = deps.store.getSecretsSnapshot();
+  const key = scope.kind === "repo" ? "repo" : `env:${scope.name}`;
+  return snap.variablesByScope.get(key)?.map((v) => v.name) ?? [];
 }
 
 // --- view preferences ------------------------------------------------------

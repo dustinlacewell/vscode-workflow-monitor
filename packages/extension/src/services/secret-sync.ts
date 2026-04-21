@@ -72,17 +72,24 @@ export class SecretSync implements vscode.Disposable {
     this.store.setSecretsStatus("loading");
 
     try {
-      const [repoSecrets, environments] = await Promise.all([
+      const [repoSecrets, repoVariables, environments] = await Promise.all([
         api.listRepoSecrets(repo, ac.signal),
+        api.listRepoVariables(repo, ac.signal),
         api.listEnvironments(repo, ac.signal),
       ]);
       if (ac.signal.aborted) return;
       this.store.setEnvironments(environments);
       this.store.setSecrets({ kind: "repo" }, repoSecrets);
+      this.store.setVariables({ kind: "repo" }, repoVariables);
 
-      // Eager parallel fetch for every environment's secrets. Each failure
-      // is isolated — one env 403 shouldn't blank the whole tree.
-      await Promise.all(environments.map((env) => this.fetchEnvSecrets(api, repo, env.name, ac.signal)));
+      // Eager parallel fetch for every environment's secrets + variables.
+      // Each failure is isolated — one env 403 shouldn't blank the tree.
+      await Promise.all(
+        environments.flatMap((env) => [
+          this.fetchEnvSecrets(api, repo, env.name, ac.signal),
+          this.fetchEnvVariables(api, repo, env.name, ac.signal),
+        ]),
+      );
     } catch (err) {
       if (isAbort(err)) return;
       this.handleError(err);
@@ -105,6 +112,22 @@ export class SecretSync implements vscode.Disposable {
     } catch (err) {
       if (isAbort(err)) return;
       this.log.warn(`listEnvironmentSecrets(${envName}) failed`, err);
+    }
+  }
+
+  private async fetchEnvVariables(
+    api: GitHubApi,
+    repo: RepoCoordinates,
+    envName: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    try {
+      const variables = await api.listEnvironmentVariables(repo, envName, signal);
+      if (signal.aborted) return;
+      this.store.setVariables({ kind: "environment", name: envName }, variables);
+    } catch (err) {
+      if (isAbort(err)) return;
+      this.log.warn(`listEnvironmentVariables(${envName}) failed`, err);
     }
   }
 
@@ -140,6 +163,45 @@ export class SecretSync implements vscode.Disposable {
       await api.deleteEnvironmentSecret(repo, scope.name, name);
     }
     await this.refreshScope(scope);
+  }
+
+  /**
+   * Create or update a variable. GitHub distinguishes create (POST) from
+   * update (PATCH), so we pick the right call based on whether the name
+   * is already known in the snapshot.
+   */
+  async writeVariable(scope: SecretScope, name: string, value: string, exists: boolean): Promise<void> {
+    const { api, repo } = this.requireContext();
+    const normalized = value.replace(/\r\n/g, "\n");
+    if (scope.kind === "repo") {
+      if (exists) await api.updateRepoVariable(repo, name, normalized);
+      else await api.createRepoVariable(repo, name, normalized);
+    } else {
+      if (exists) await api.updateEnvironmentVariable(repo, scope.name, name, normalized);
+      else await api.createEnvironmentVariable(repo, scope.name, name, normalized);
+    }
+    await this.refreshVariableScope(scope);
+  }
+
+  async deleteVariable(scope: SecretScope, name: string): Promise<void> {
+    const { api, repo } = this.requireContext();
+    if (scope.kind === "repo") {
+      await api.deleteRepoVariable(repo, name);
+    } else {
+      await api.deleteEnvironmentVariable(repo, scope.name, name);
+    }
+    await this.refreshVariableScope(scope);
+  }
+
+  private async refreshVariableScope(scope: SecretScope): Promise<void> {
+    const { api, repo } = this.requireContext();
+    if (scope.kind === "repo") {
+      const variables = await api.listRepoVariables(repo);
+      this.store.setVariables({ kind: "repo" }, variables);
+      return;
+    }
+    const variables = await api.listEnvironmentVariables(repo, scope.name);
+    this.store.setVariables({ kind: "environment", name: scope.name }, variables);
   }
 
   private async refreshScope(scope: SecretScope): Promise<void> {

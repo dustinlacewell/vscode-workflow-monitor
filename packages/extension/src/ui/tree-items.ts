@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import type { Environment, Secret, SecretScope } from "../core/domain/secrets.js";
+import type { Environment, Secret, SecretScope, Variable } from "../core/domain/secrets.js";
 import type { Artifact, Job, RepoCoordinates, RunConclusion, RunStatus, Step, Workflow, WorkflowRun } from "../core/domain/types.js";
 import { hasFailed } from "../core/domain/types.js";
 import { durationBetween, formatDuration, formatRelative } from "../util/format.js";
@@ -26,7 +26,8 @@ export type TreeNode =
   | SettingsSectionNode
   | EnvironmentNode
   | EnvironmentSubsectionNode
-  | SecretNode;
+  | SecretNode
+  | VariableNode;
 
 export class MessageNode extends vscode.TreeItem {
   readonly kind = "message" as const;
@@ -279,6 +280,38 @@ export class SecretNode extends vscode.TreeItem {
 
 function scopeIdPart(scope: SecretScope): string {
   return scope.kind === "repo" ? "repo" : `env:${scope.name}`;
+}
+
+/**
+ * Variables are plaintext on the API surface, so unlike secrets we *can* show
+ * the value. We truncate on the label (max ~40 chars, newlines stripped) and
+ * put the full value in the tooltip + a Copy-Value action.
+ */
+export class VariableNode extends vscode.TreeItem {
+  readonly kind = "variable" as const;
+  constructor(readonly scope: SecretScope, readonly variable: Variable) {
+    super(variable.name, vscode.TreeItemCollapsibleState.None);
+    this.id = `variable:${scopeIdPart(scope)}:${variable.name}`;
+    this.description = formatVariablePreview(variable.value);
+    this.iconPath = new vscode.ThemeIcon("symbol-string");
+    this.tooltip = new vscode.MarkdownString(
+      `**${variable.name}**\n\n`
+      + `- scope: ${scope.kind === "repo" ? "repository" : `environment \`${scope.name}\``}\n`
+      + `- updated: ${formatRelative(variable.updatedAt)}\n\n`
+      + "```\n" + variable.value + "\n```",
+    );
+    this.contextValue = "variable";
+    this.command = {
+      command: "workflowMonitor.copyVariableValue",
+      title: "Copy Variable Value",
+      arguments: [this],
+    };
+  }
+}
+
+function formatVariablePreview(value: string): string {
+  const singleLine = value.replace(/[\r\n]+/g, " ⏎ ");
+  return singleLine.length > 40 ? singleLine.slice(0, 37) + "…" : singleLine;
 }
 
 function iconForRun(run: WorkflowRun | null): vscode.ThemeIcon {

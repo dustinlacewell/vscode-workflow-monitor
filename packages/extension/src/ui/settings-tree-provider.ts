@@ -5,10 +5,9 @@ import type {
   SectionListView,
   SettingsRepoView,
   SettingsView,
-  VariablesScopeView,
 } from "../core/selectors/settings.js";
 import { selectSettingsView } from "../core/selectors/settings.js";
-import type { Secret } from "../core/domain/secrets.js";
+import type { Secret, Variable } from "../core/domain/secrets.js";
 import type { SecretSync } from "../services/secret-sync.js";
 import type { WorkflowStore } from "../services/workflow-store.js";
 import {
@@ -18,6 +17,7 @@ import {
   SecretNode,
   SettingsRepoNode,
   SettingsSectionNode,
+  VariableNode,
   type TreeNode,
 } from "./tree-items.js";
 
@@ -77,7 +77,7 @@ export class SettingsTreeProvider implements vscode.TreeDataProvider<TreeNode>, 
   ): TreeNode[] {
     const envView = findEnv(repoView, node.environment.name);
     if (!envView) return [];
-    if (node.section === "variables") return renderVariables(envView.variables);
+    if (node.section === "variables") return this.renderEnvVariables(node, envView);
     return this.renderEnvSecrets(node, envView);
   }
 
@@ -86,17 +86,33 @@ export class SettingsTreeProvider implements vscode.TreeDataProvider<TreeNode>, 
     envView: EnvironmentView,
   ): TreeNode[] {
     if (envView.secrets.kind === "loading") {
-      const key = node.environment.name;
-      if (!this.requestedEnvScopes.has(key)) {
-        this.requestedEnvScopes.add(key);
-        void this.sync.refreshEnvironment(node.environment.name);
-      }
+      this.ensureEnvFetch(node.environment.name);
       return [new MessageNode("Loading secrets…", "sync~spin")];
     }
     if (envView.secrets.items.length === 0) {
       return [new MessageNode("No secrets in this environment", "info")];
     }
     return envView.secrets.items.map((s) => new SecretNode({ kind: "environment", name: envView.environment.name }, s));
+  }
+
+  private renderEnvVariables(
+    node: EnvironmentSubsectionNode,
+    envView: EnvironmentView,
+  ): TreeNode[] {
+    if (envView.variables.kind === "loading") {
+      this.ensureEnvFetch(node.environment.name);
+      return [new MessageNode("Loading variables…", "sync~spin")];
+    }
+    if (envView.variables.items.length === 0) {
+      return [new MessageNode("No variables in this environment", "info")];
+    }
+    return envView.variables.items.map((v) => new VariableNode({ kind: "environment", name: envView.environment.name }, v));
+  }
+
+  private ensureEnvFetch(envName: string): void {
+    if (this.requestedEnvScopes.has(envName)) return;
+    this.requestedEnvScopes.add(envName);
+    void this.sync.refreshEnvironment(envName);
   }
 
   dispose(): void {
@@ -130,7 +146,7 @@ function findEnv(repoView: SettingsRepoView, name: string): EnvironmentView | nu
 function renderRepoChildren(repoView: SettingsRepoView): TreeNode[] {
   return [
     new SettingsSectionNode("secrets", scopeCount(repoView.repoSecrets)),
-    new SettingsSectionNode("variables"),
+    new SettingsSectionNode("variables", scopeCount(repoView.repoVariables)),
     new SettingsSectionNode("environments", envSectionCount(repoView.environments)),
   ];
 }
@@ -138,7 +154,7 @@ function renderRepoChildren(repoView: SettingsRepoView): TreeNode[] {
 function renderRepoSection(node: SettingsSectionNode, repoView: SettingsRepoView): TreeNode[] {
   switch (node.section) {
     case "secrets":      return renderRepoSecrets(repoView.repoSecrets);
-    case "variables":    return renderVariables(repoView.repoVariables);
+    case "variables":    return renderRepoVariables(repoView.repoVariables);
     case "environments": return renderEnvironments(repoView.environments);
   }
 }
@@ -154,6 +170,20 @@ function renderRepoSecrets(
     case "items":
       if (view.items.length === 0) return [new MessageNode("No repository secrets", "info")];
       return view.items.map((s) => new SecretNode({ kind: "repo" }, s));
+  }
+}
+
+function renderRepoVariables(
+  view: ScopeListView<Variable> | { kind: "error"; errorMessage: string },
+): TreeNode[] {
+  switch (view.kind) {
+    case "loading":
+      return [new MessageNode("Loading variables…", "sync~spin")];
+    case "error":
+      return [new MessageNode(`Error: ${view.errorMessage}`, "error")];
+    case "items":
+      if (view.items.length === 0) return [new MessageNode("No repository variables", "info")];
+      return view.items.map((v) => new VariableNode({ kind: "repo" }, v));
   }
 }
 
@@ -174,19 +204,11 @@ function renderEnvChildren(node: EnvironmentNode, repoView: SettingsRepoView): T
   if (!envView) return [];
   return [
     new EnvironmentSubsectionNode(node.environment, "secrets", scopeCount(envView.secrets)),
-    new EnvironmentSubsectionNode(node.environment, "variables"),
+    new EnvironmentSubsectionNode(node.environment, "variables", scopeCount(envView.variables)),
   ];
 }
 
-function renderVariables(_view: VariablesScopeView): TreeNode[] {
-  return [new MessageNode(
-    "Variables — not yet implemented",
-    "tools",
-    "This surface is planned but not wired up in this build.",
-  )];
-}
-
-function scopeCount(view: ScopeListView<Secret> | { kind: "error"; errorMessage: string }): number | "loading" | undefined {
+function scopeCount<T>(view: ScopeListView<T> | { kind: "error"; errorMessage: string }): number | "loading" | undefined {
   if (view.kind === "loading") return "loading";
   if (view.kind === "error") return undefined;
   return view.items.length;

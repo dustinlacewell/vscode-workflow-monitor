@@ -104,15 +104,7 @@ export async function promptSecretName(opts: { scopeLabel: string; taken: readon
 }
 
 function validateSecretName(raw: string, taken: ReadonlySet<string>): string | undefined {
-  const v = raw.trim();
-  if (v.length === 0) return "Name is required";
-  if (v.length > 245) return "Name must be 245 characters or fewer";
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) {
-    return "Use only letters, digits, and underscores; must start with a letter or underscore";
-  }
-  if (/^GITHUB_/i.test(v)) return "Names starting with GITHUB_ are reserved by GitHub";
-  if (taken.has(v)) return `A secret named "${v}" already exists in this scope`;
-  return undefined;
+  return validateIdentifierName(raw, taken, "secret");
 }
 
 /**
@@ -133,4 +125,53 @@ export async function promptSecretValue(opts: {
     validateInput: (v) => v.length === 0 ? "Value must not be empty" : undefined,
   });
   return value ?? null;
+}
+
+/**
+ * Variable names follow the same rules as secrets on GitHub's side (they
+ * share the same identifier namespace at runtime).
+ */
+export async function promptVariableName(opts: { scopeLabel: string; taken: readonly string[] }): Promise<string | null> {
+  const takenSet = new Set(opts.taken);
+  const value = await vscode.window.showInputBox({
+    title: `New variable — ${opts.scopeLabel}`,
+    prompt: "Uppercase letters, digits, and underscores. Must start with a letter or underscore.",
+    placeHolder: "MY_VARIABLE",
+    ignoreFocusOut: true,
+    validateInput: (v) => validateIdentifierName(v, takenSet, "variable"),
+  });
+  if (value === undefined) return null;
+  return value.trim();
+}
+
+/**
+ * Prompt for a variable value. Plaintext (no password mask) — variables are
+ * non-secret by design, and seeing the value as you type/paste is useful.
+ */
+export async function promptVariableValue(opts: {
+  title: string;
+  current?: string;
+  prompt?: string;
+}): Promise<string | null> {
+  const value = await vscode.window.showInputBox({
+    title: opts.title,
+    ...(opts.prompt ? { prompt: opts.prompt } : {}),
+    ...(opts.current !== undefined ? { value: opts.current } : {}),
+    placeHolder: "Paste or type the variable value. Multi-line values are supported.",
+    ignoreFocusOut: true,
+    validateInput: (v) => v.length === 0 ? "Value must not be empty" : undefined,
+  });
+  return value ?? null;
+}
+
+function validateIdentifierName(raw: string, taken: ReadonlySet<string>, kind: string): string | undefined {
+  const v = raw.trim();
+  if (v.length === 0) return "Name is required";
+  if (v.length > 245) return "Name must be 245 characters or fewer";
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) {
+    return "Use only letters, digits, and underscores; must start with a letter or underscore";
+  }
+  if (/^GITHUB_/i.test(v)) return "Names starting with GITHUB_ are reserved by GitHub";
+  if (taken.has(v)) return `A ${kind} named "${v}" already exists in this scope`;
+  return undefined;
 }

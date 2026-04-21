@@ -1,6 +1,6 @@
 import { Octokit } from "@octokit/rest";
 import { RequestError } from "@octokit/request-error";
-import type { Environment, Secret } from "../core/domain/secrets.js";
+import type { Environment, Secret, Variable } from "../core/domain/secrets.js";
 import type {
   Artifact,
   Job,
@@ -302,6 +302,77 @@ export class GitHubClient implements GitHubApi {
     );
   }
 
+  // --- variables ------------------------------------------------------------
+
+  async listRepoVariables(repo: RepoCoordinates, signal?: AbortSignal): Promise<Variable[]> {
+    const key = `repoVars:${repo.owner}/${repo.repo}`;
+    const data = await this.conditionalGet<{ variables: RawVariable[] }>(
+      key,
+      "GET /repos/{owner}/{repo}/actions/variables",
+      { owner: repo.owner, repo: repo.repo, per_page: 100 },
+      signal,
+    );
+    return data.variables.map((v) => mapVariable(v, { kind: "repo" }));
+  }
+
+  async listEnvironmentVariables(repo: RepoCoordinates, env: string, signal?: AbortSignal): Promise<Variable[]> {
+    const key = `envVars:${repo.owner}/${repo.repo}:${env}`;
+    const data = await this.conditionalGet<{ variables: RawVariable[] }>(
+      key,
+      "GET /repos/{owner}/{repo}/environments/{environment_name}/variables",
+      { owner: repo.owner, repo: repo.repo, environment_name: env, per_page: 100 },
+      signal,
+    );
+    return data.variables.map((v) => mapVariable(v, { kind: "environment", name: env }));
+  }
+
+  async createRepoVariable(repo: RepoCoordinates, name: string, value: string): Promise<void> {
+    await this.mutate("POST /repos/{owner}/{repo}/actions/variables", {
+      owner: repo.owner,
+      repo: repo.repo,
+      name,
+      value,
+    });
+  }
+
+  async updateRepoVariable(repo: RepoCoordinates, name: string, value: string): Promise<void> {
+    await this.mutate("PATCH /repos/{owner}/{repo}/actions/variables/{name}", {
+      owner: repo.owner,
+      repo: repo.repo,
+      name,
+      value,
+    });
+  }
+
+  async deleteRepoVariable(repo: RepoCoordinates, name: string): Promise<void> {
+    await this.mutate("DELETE /repos/{owner}/{repo}/actions/variables/{name}", {
+      owner: repo.owner,
+      repo: repo.repo,
+      name,
+    });
+  }
+
+  async createEnvironmentVariable(repo: RepoCoordinates, env: string, name: string, value: string): Promise<void> {
+    await this.mutate(
+      "POST /repos/{owner}/{repo}/environments/{environment_name}/variables",
+      { owner: repo.owner, repo: repo.repo, environment_name: env, name, value },
+    );
+  }
+
+  async updateEnvironmentVariable(repo: RepoCoordinates, env: string, name: string, value: string): Promise<void> {
+    await this.mutate(
+      "PATCH /repos/{owner}/{repo}/environments/{environment_name}/variables/{name}",
+      { owner: repo.owner, repo: repo.repo, environment_name: env, name, value },
+    );
+  }
+
+  async deleteEnvironmentVariable(repo: RepoCoordinates, env: string, name: string): Promise<void> {
+    await this.mutate(
+      "DELETE /repos/{owner}/{repo}/environments/{environment_name}/variables/{name}",
+      { owner: repo.owner, repo: repo.repo, environment_name: env, name },
+    );
+  }
+
   private async conditionalGet<T>(
     cacheKey: string,
     route: string,
@@ -543,6 +614,23 @@ function mapPublicKey(raw: RawPublicKey): PublicKey {
 function mapSecret(raw: RawSecret, scope: Secret["scope"]): Secret {
   return {
     name: raw.name,
+    scope,
+    createdAt: raw.created_at,
+    updatedAt: raw.updated_at,
+  };
+}
+
+interface RawVariable {
+  name: string;
+  value: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function mapVariable(raw: RawVariable, scope: Variable["scope"]): Variable {
+  return {
+    name: raw.name,
+    value: raw.value,
     scope,
     createdAt: raw.created_at,
     updatedAt: raw.updated_at,

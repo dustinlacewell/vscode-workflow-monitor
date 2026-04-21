@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { selectSettingsView } from "./settings.js";
-import { makeEnvironment, makeSecret, makeSecretsSnapshot, makeSnapshot } from "./test-fixtures.js";
+import { makeEnvironment, makeSecret, makeSecretsSnapshot, makeSnapshot, makeVariable } from "./test-fixtures.js";
 
 describe("selectSettingsView", () => {
   it("idle when the store hasn't started", () => {
@@ -67,16 +67,41 @@ describe("selectSettingsView", () => {
     expect(v.repos[0]!.environments).toEqual({ kind: "error", errorMessage: "403 Forbidden" });
   });
 
-  it("variables sections are placeholders at every scope until the feature lands", () => {
-    const env = makeEnvironment({ name: "production" });
+  it("repo variables are returned in sorted order with plaintext values intact", () => {
     const snap = makeSnapshot({
-      secrets: makeSecretsSnapshot({ environments: [env] }),
+      secrets: makeSecretsSnapshot({
+        variablesByScope: [
+          [{ kind: "repo" }, [
+            makeVariable({ name: "NODE_ENV", value: "production" }),
+            makeVariable({ name: "AWS_REGION", value: "us-east-1" }),
+          ]],
+        ],
+      }),
     });
     const v = selectSettingsView(snap);
     if (v.kind !== "repos") throw new Error("expected repos");
-    expect(v.repos[0]!.repoVariables).toEqual({ kind: "not-implemented" });
+    if (v.repos[0]!.repoVariables.kind !== "items") throw new Error("unreachable");
+    expect(v.repos[0]!.repoVariables.items.map((x) => x.name)).toEqual(["AWS_REGION", "NODE_ENV"]);
+    expect(v.repos[0]!.repoVariables.items[0]!.value).toBe("us-east-1");
+  });
+
+  it("env variables are tri-state (loading until fetched)", () => {
+    const envProd = makeEnvironment({ name: "production" });
+    const envStaging = makeEnvironment({ name: "staging" });
+    const snap = makeSnapshot({
+      secrets: makeSecretsSnapshot({
+        environments: [envProd, envStaging],
+        variablesByScope: [
+          [{ kind: "environment", name: "production" }, [makeVariable({ name: "STAGE", value: "prod" })]],
+        ],
+      }),
+    });
+    const v = selectSettingsView(snap);
+    if (v.kind !== "repos") throw new Error("expected repos");
     if (v.repos[0]!.environments.kind !== "items") throw new Error("unreachable");
-    expect(v.repos[0]!.environments.items[0]!.variables).toEqual({ kind: "not-implemented" });
+    const envs = v.repos[0]!.environments.items;
+    expect(envs[0]!.variables.kind).toBe("items");
+    expect(envs[1]!.variables).toEqual({ kind: "loading" });
   });
 
   it("sorts secrets alphabetically within a scope", () => {

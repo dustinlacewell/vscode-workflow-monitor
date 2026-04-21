@@ -27,6 +27,19 @@ export interface Secret {
   readonly updatedAt: string;
 }
 
+/**
+ * Variables share the secret scope model but carry plaintext values — GitHub
+ * returns the value on GET. That's the whole UX difference: we can show and
+ * copy values; for secrets we can't.
+ */
+export interface Variable {
+  readonly name: string;
+  readonly value: string;
+  readonly scope: SecretScope;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface Environment {
   readonly name: string;
   readonly htmlUrl: string | null;

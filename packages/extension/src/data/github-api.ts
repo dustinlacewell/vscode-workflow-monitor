@@ -1,4 +1,4 @@
-import type { Environment, Secret } from "../core/domain/secrets.js";
+import type { Environment, Secret, Variable } from "../core/domain/secrets.js";
 import type { Artifact, Job, RepoCoordinates, Workflow, WorkflowRun } from "../core/domain/types.js";
 
 export interface RateLimitSnapshot {
@@ -50,6 +50,19 @@ export interface GitHubApi {
 
   deleteRepoSecret(repo: RepoCoordinates, name: string): Promise<void>;
   deleteEnvironmentSecret(repo: RepoCoordinates, env: string, name: string): Promise<void>;
+
+  // --- variables ----------------------------------------------------------
+
+  listRepoVariables(repo: RepoCoordinates, signal?: AbortSignal): Promise<Variable[]>;
+  listEnvironmentVariables(repo: RepoCoordinates, env: string, signal?: AbortSignal): Promise<Variable[]>;
+
+  createRepoVariable(repo: RepoCoordinates, name: string, value: string): Promise<void>;
+  updateRepoVariable(repo: RepoCoordinates, name: string, value: string): Promise<void>;
+  deleteRepoVariable(repo: RepoCoordinates, name: string): Promise<void>;
+
+  createEnvironmentVariable(repo: RepoCoordinates, env: string, name: string, value: string): Promise<void>;
+  updateEnvironmentVariable(repo: RepoCoordinates, env: string, name: string, value: string): Promise<void>;
+  deleteEnvironmentVariable(repo: RepoCoordinates, env: string, name: string): Promise<void>;
 }
 
 /**

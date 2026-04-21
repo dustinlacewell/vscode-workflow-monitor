@@ -1,5 +1,5 @@
 import type { AuthFailure } from "../auth/failure.js";
-import type { Environment, Secret, SecretScope } from "../domain/secrets.js";
+import type { Environment, Secret, SecretScope, Variable } from "../domain/secrets.js";
 import { scopeKey } from "../domain/secrets.js";
 import type { Artifact, Job, Workflow, WorkflowRun } from "../domain/types.js";
 import { EMPTY_SECRETS_SNAPSHOT, type SecretsSnapshot, type SecretsStatus } from "../store/secrets-snapshot.js";
@@ -94,6 +94,16 @@ export function makeSecret(partial: Partial<Secret> & Pick<Secret, "name">): Sec
   };
 }
 
+export function makeVariable(partial: Partial<Variable> & Pick<Variable, "name">): Variable {
+  return {
+    value: `value-${partial.name}`,
+    scope: { kind: "repo" },
+    createdAt: "2026-04-01T00:00:00Z",
+    updatedAt: "2026-04-01T00:00:00Z",
+    ...partial,
+  };
+}
+
 export function makeEnvironment(partial: Partial<Environment> & Pick<Environment, "name">): Environment {
   return {
     htmlUrl: `https://github.com/o/r/deployments/${partial.name}`,
@@ -108,16 +118,20 @@ export interface SecretsSnapshotOptions {
   status?: SecretsStatus;
   environments?: readonly Environment[];
   byScope?: ReadonlyArray<readonly [SecretScope, readonly Secret[]]>;
+  variablesByScope?: ReadonlyArray<readonly [SecretScope, readonly Variable[]]>;
   errorMessage?: string | null;
 }
 
 export function makeSecretsSnapshot(opts: SecretsSnapshotOptions = {}): SecretsSnapshot {
-  const map = new Map<string, readonly Secret[]>();
-  for (const [scope, list] of opts.byScope ?? []) map.set(scopeKey(scope), list);
+  const secrets = new Map<string, readonly Secret[]>();
+  for (const [scope, list] of opts.byScope ?? []) secrets.set(scopeKey(scope), list);
+  const variables = new Map<string, readonly Variable[]>();
+  for (const [scope, list] of opts.variablesByScope ?? []) variables.set(scopeKey(scope), list);
   return {
     status: opts.status ?? "ready",
     environments: opts.environments ?? [],
-    secretsByScope: map,
+    secretsByScope: secrets,
+    variablesByScope: variables,
     errorMessage: opts.errorMessage ?? null,
     lastUpdated: null,
   };

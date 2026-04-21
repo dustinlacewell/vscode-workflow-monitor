@@ -1,4 +1,4 @@
-import type { Environment, Secret, SecretScope } from "../domain/secrets.js";
+import type { Environment, Secret, SecretScope, Variable } from "../domain/secrets.js";
 import { scopeKey } from "../domain/secrets.js";
 import type { RepoCoordinates } from "../domain/types.js";
 import type { StoreSnapshot } from "../store/snapshot.js";
@@ -12,14 +12,6 @@ export type ScopeListView<T> =
   | { kind: "items"; items: readonly T[] };
 
 /**
- * Placeholder for the variables surface until we implement it. Keeps the shape
- * in place so the tree can render a consistent "coming soon" leaf without
- * conditionally hiding the node.
- */
-export type VariablesScopeView =
-  | { kind: "not-implemented" };
-
-/**
  * View-model for a single environment under the Settings tree. Each env owns
  * its own Secrets and Variables sub-sections — that's the whole point of
  * having the Environments section, rather than making it a parallel "flat
@@ -28,7 +20,7 @@ export type VariablesScopeView =
 export interface EnvironmentView {
   readonly environment: Environment;
   readonly secrets: ScopeListView<Secret>;
-  readonly variables: VariablesScopeView;
+  readonly variables: ScopeListView<Variable>;
 }
 
 export type SectionListView<T> =
@@ -39,7 +31,7 @@ export type SectionListView<T> =
 export interface SettingsRepoView {
   readonly repo: RepoCoordinates;
   readonly repoSecrets: ScopeListView<Secret> | { kind: "error"; errorMessage: string };
-  readonly repoVariables: VariablesScopeView;
+  readonly repoVariables: ScopeListView<Variable> | { kind: "error"; errorMessage: string };
   readonly environments: SectionListView<EnvironmentView>;
 }
 
@@ -63,14 +55,14 @@ function buildRepoView(repo: RepoCoordinates, snap: StoreSnapshot): SettingsRepo
     return {
       repo,
       repoSecrets: error,
-      repoVariables: { kind: "not-implemented" },
+      repoVariables: error,
       environments: error,
     };
   }
   return {
     repo,
-    repoSecrets: selectScopeList(snap, { kind: "repo" }),
-    repoVariables: { kind: "not-implemented" },
+    repoSecrets: selectSecretScope(snap, { kind: "repo" }),
+    repoVariables: selectVariableScope(snap, { kind: "repo" }),
     environments: selectEnvironmentsSection(snap),
   };
 }
@@ -83,18 +75,24 @@ function selectEnvironmentsSection(snap: StoreSnapshot): SectionListView<Environ
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((env): EnvironmentView => ({
       environment: env,
-      secrets: selectScopeList(snap, { kind: "environment", name: env.name }),
-      variables: { kind: "not-implemented" },
+      secrets: selectSecretScope(snap, { kind: "environment", name: env.name }),
+      variables: selectVariableScope(snap, { kind: "environment", name: env.name }),
     }));
   return { kind: "items", items };
 }
 
-function selectScopeList(snap: StoreSnapshot, scope: SecretScope): ScopeListView<Secret> {
+function selectSecretScope(snap: StoreSnapshot, scope: SecretScope): ScopeListView<Secret> {
   const items = snap.secrets.secretsByScope.get(scopeKey(scope));
   if (items === undefined) return { kind: "loading" };
-  return { kind: "items", items: sortSecrets(items) };
+  return { kind: "items", items: sortNamed(items) };
 }
 
-function sortSecrets(items: readonly Secret[]): readonly Secret[] {
+function selectVariableScope(snap: StoreSnapshot, scope: SecretScope): ScopeListView<Variable> {
+  const items = snap.secrets.variablesByScope.get(scopeKey(scope));
+  if (items === undefined) return { kind: "loading" };
+  return { kind: "items", items: sortNamed(items) };
+}
+
+function sortNamed<T extends { name: string }>(items: readonly T[]): readonly T[] {
   return [...items].sort((a, b) => a.name.localeCompare(b.name));
 }

@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import type { AuthFailure } from "../core/auth/failure.js";
-import type { Environment, Secret, SecretScope } from "../core/domain/secrets.js";
+import type { Environment, Secret, SecretScope, Variable } from "../core/domain/secrets.js";
 import { scopeKey } from "../core/domain/secrets.js";
 import type { Artifact, Job, JobContext, RepoCoordinates, Workflow, WorkflowRun } from "../core/domain/types.js";
 import { isActiveStatus } from "../core/domain/types.js";
@@ -121,6 +121,21 @@ export class WorkflowStore implements vscode.Disposable {
       secrets: {
         ...this.snap.secrets,
         secretsByScope: next,
+        status: "ready",
+        errorMessage: null,
+        lastUpdated: new Date(),
+      },
+    });
+  }
+
+  setVariables(scope: SecretScope, variables: readonly Variable[]): void {
+    const key = scopeKey(scope);
+    const next = new Map(this.snap.secrets.variablesByScope);
+    next.set(key, variables);
+    this.update({
+      secrets: {
+        ...this.snap.secrets,
+        variablesByScope: next,
         status: "ready",
         errorMessage: null,
         lastUpdated: new Date(),
