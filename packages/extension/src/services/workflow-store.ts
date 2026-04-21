@@ -2,32 +2,39 @@ import * as vscode from "vscode";
 import type { AuthFailure } from "../core/auth/failure.js";
 import type { Environment, Secret, SecretScope, Variable } from "../core/domain/secrets.js";
 import { scopeKey } from "../core/domain/secrets.js";
-import type { Artifact, Job, JobContext, RepoCoordinates, Workflow, WorkflowRun } from "../core/domain/types.js";
-import { isActiveStatus } from "../core/domain/types.js";
+import type {
+  Artifact,
+  Job,
+  JobContext,
+  RepoCoordinates,
+  RepoKey,
+  Workflow,
+  WorkflowRun,
+} from "../core/domain/types.js";
+import { isActiveStatus, repoKey, sameRepo } from "../core/domain/types.js";
 import { EMPTY_SECRETS_SNAPSHOT, type SecretsSnapshot, type SecretsStatus } from "../core/store/secrets-snapshot.js";
-import type { StoreSnapshot, StoreStatus } from "../core/store/snapshot.js";
+import { emptyPerRepoState, type PerRepoState, type StoreSnapshot, type StoreStatus } from "../core/store/snapshot.js";
 
-export type { StoreSnapshot, StoreStatus };
+export type { PerRepoState, StoreSnapshot, StoreStatus };
 
 /**
  * Single source of truth for the sidebar's domain data.
  *
- * Kept deliberately passive — it does not fetch. The LiveSync service pushes
- * updates in; the UI subscribes to onDidChange and reads snapshot().
+ * Multi-repo-aware: every mutation takes a `RepoKey` so the right per-repo
+ * sub-state is updated. Callers stay in the domain by passing
+ * `RepoCoordinates` where convenient — the store derives the key internally.
+ *
+ * Kept deliberately passive — it does not fetch. LiveSync / SecretSync push
+ * updates in; the UI subscribes to `onDidChange` and reads `snapshot()`.
  */
 export class WorkflowStore implements vscode.Disposable {
   private readonly emitter = new vscode.EventEmitter<StoreSnapshot>();
   private snap: StoreSnapshot = {
     status: "idle",
-    repo: null,
-    branch: null,
-    workflows: [],
-    runsByWorkflowId: new Map(),
-    jobsByRunId: new Map(),
-    artifactsByRunId: new Map(),
+    repos: new Map(),
+    secretsByRepo: new Map(),
     errorMessage: null,
     authFailure: null,
-    secrets: EMPTY_SECRETS_SNAPSHOT,
     lastUpdated: null,
   };
 
@@ -36,36 +43,31 @@ export class WorkflowStore implements vscode.Disposable {
   snapshot(): StoreSnapshot { return this.snap; }
 
   hasActiveRuns(): boolean {
-    for (const runs of this.snap.runsByWorkflowId.values()) {
-      if (runs.some((r) => isActiveStatus(r.status))) return true;
+    for (const per of this.snap.repos.values()) {
+      for (const runs of per.runsByWorkflowId.values()) {
+        if (runs.some((r) => isActiveStatus(r.status))) return true;
+      }
     }
     return false;
   }
 
-  /** Find a job across all cached runs + its owning run + workflow name. */
-  resolveJob(runId: number, jobId: number): JobContext | null {
-    for (const [workflowId, runs] of this.snap.runsByWorkflowId) {
+  /** Find a job across any repo's cached runs, returning its owning run + workflow name. */
+  resolveJob(key: RepoKey, runId: number, jobId: number): JobContext | null {
+    const per = this.snap.repos.get(key);
+    if (!per) return null;
+    for (const [workflowId, runs] of per.runsByWorkflowId) {
       const run = runs.find((r) => r.id === runId);
       if (!run) continue;
-      const jobs = this.snap.jobsByRunId.get(runId);
+      const jobs = per.jobsByRunId.get(runId);
       const job = jobs?.find((j) => j.id === jobId) ?? null;
       if (!job) return null;
-      const workflow = this.snap.workflows.find((w) => w.id === workflowId);
+      const workflow = per.workflows.find((w) => w.id === workflowId);
       return { run, workflowName: workflow?.name ?? "Unknown workflow", job };
     }
     return null;
   }
 
-  resolveRun(runId: number): { run: WorkflowRun; workflowName: string } | null {
-    for (const [workflowId, runs] of this.snap.runsByWorkflowId) {
-      const run = runs.find((r) => r.id === runId);
-      if (!run) continue;
-      const workflow = this.snap.workflows.find((w) => w.id === workflowId);
-      return { run, workflowName: workflow?.name ?? "Unknown workflow" };
-    }
-    return null;
-  }
-
+  // --- status + auth (global) ---------------------------------------------
 
   setStatus(status: StoreStatus, errorMessage: string | null = null): void {
     this.update({ status, errorMessage });
@@ -75,114 +77,155 @@ export class WorkflowStore implements vscode.Disposable {
     this.update({ authFailure: failure });
   }
 
-  setRepo(repo: RepoCoordinates | null, branch: string | null): void {
-    if (
-      this.snap.repo?.owner === repo?.owner &&
-      this.snap.repo?.repo === repo?.repo &&
-      this.snap.branch === branch
-    ) return;
+  // --- repo lifecycle -----------------------------------------------------
+
+  /**
+   * Replace the set of tracked repos. Any repo not in `next` is dropped from
+   * both the workflows data and the settings data. New repos get fresh empty
+   * PerRepoState entries.
+   */
+  setRepos(next: ReadonlyArray<{ coords: RepoCoordinates; branch: string | null }>): void {
+    const repos = new Map<RepoKey, PerRepoState>();
+    const secretsByRepo = new Map<RepoKey, SecretsSnapshot>();
+    for (const { coords, branch } of next) {
+      const key = repoKey(coords);
+      const existing = this.snap.repos.get(key);
+      if (existing && sameRepo(existing.repo, coords)) {
+        repos.set(key, { ...existing, branch });
+      } else {
+        repos.set(key, emptyPerRepoState(coords, branch));
+      }
+      const existingSecrets = this.snap.secretsByRepo.get(key);
+      secretsByRepo.set(key, existingSecrets ?? EMPTY_SECRETS_SNAPSHOT);
+    }
+    // Only reset status if the set of tracked repos meaningfully shifted.
+    const changed = !sameKeySet(this.snap.repos, repos);
+    const status: StoreStatus = next.length === 0
+      ? "no-repo"
+      : changed && this.snap.status !== "unauthenticated" && this.snap.status !== "error"
+        ? "loading"
+        : this.snap.status;
     this.update({
-      repo,
-      branch,
-      workflows: [],
-      runsByWorkflowId: new Map(),
-      jobsByRunId: new Map(),
-      artifactsByRunId: new Map(),
-      status: repo ? "loading" : "no-repo",
+      repos,
+      secretsByRepo,
+      status,
       errorMessage: null,
       authFailure: null,
-      secrets: EMPTY_SECRETS_SNAPSHOT,
     });
   }
 
-  // --- secrets ------------------------------------------------------------
+  // --- per-repo workflow data --------------------------------------------
 
-  setSecretsStatus(status: SecretsStatus, errorMessage: string | null = null): void {
-    this.update({ secrets: { ...this.snap.secrets, status, errorMessage } });
+  setWorkflows(key: RepoKey, workflows: readonly Workflow[]): void {
+    this.patchRepo(key, (per) => ({ ...per, workflows, errorMessage: null, lastUpdated: new Date() }));
+    this.update({ status: "ready", errorMessage: null, authFailure: null });
   }
 
-  setEnvironments(environments: readonly Environment[]): void {
-    this.update({
-      secrets: {
-        ...this.snap.secrets,
-        environments,
-        status: "ready",
-        errorMessage: null,
-        lastUpdated: new Date(),
-      },
+  setRuns(key: RepoKey, workflowId: number, runs: readonly WorkflowRun[]): void {
+    this.patchRepo(key, (per) => {
+      const nextMap = new Map(per.runsByWorkflowId);
+      nextMap.set(workflowId, runs);
+      return { ...per, runsByWorkflowId: nextMap, lastUpdated: new Date() };
     });
   }
 
-  setSecrets(scope: SecretScope, secrets: readonly Secret[]): void {
-    const key = scopeKey(scope);
-    const next = new Map(this.snap.secrets.secretsByScope);
-    next.set(key, secrets);
-    this.update({
-      secrets: {
-        ...this.snap.secrets,
-        secretsByScope: next,
-        status: "ready",
-        errorMessage: null,
-        lastUpdated: new Date(),
-      },
+  setJobs(key: RepoKey, runId: number, jobs: readonly Job[]): void {
+    this.patchRepo(key, (per) => {
+      const nextMap = new Map(per.jobsByRunId);
+      nextMap.set(runId, jobs);
+      return { ...per, jobsByRunId: nextMap, lastUpdated: new Date() };
     });
   }
 
-  setVariables(scope: SecretScope, variables: readonly Variable[]): void {
-    const key = scopeKey(scope);
-    const next = new Map(this.snap.secrets.variablesByScope);
-    next.set(key, variables);
-    this.update({
-      secrets: {
-        ...this.snap.secrets,
-        variablesByScope: next,
-        status: "ready",
-        errorMessage: null,
-        lastUpdated: new Date(),
-      },
+  setArtifacts(key: RepoKey, runId: number, artifacts: readonly Artifact[]): void {
+    this.patchRepo(key, (per) => {
+      const nextMap = new Map(per.artifactsByRunId);
+      nextMap.set(runId, artifacts);
+      return { ...per, artifactsByRunId: nextMap, lastUpdated: new Date() };
     });
   }
 
-  getSecretsSnapshot(): SecretsSnapshot { return this.snap.secrets; }
-
-  setWorkflows(workflows: readonly Workflow[]): void {
-    this.update({ workflows, status: "ready", errorMessage: null, authFailure: null, lastUpdated: new Date() });
+  setRepoError(key: RepoKey, errorMessage: string | null): void {
+    this.patchRepo(key, (per) => ({ ...per, errorMessage }));
   }
 
-  setRuns(workflowId: number, runs: readonly WorkflowRun[]): void {
-    const next = new Map(this.snap.runsByWorkflowId);
-    next.set(workflowId, runs);
-    this.update({ runsByWorkflowId: next, lastUpdated: new Date() });
+  pruneJobs(key: RepoKey, liveRunIds: ReadonlySet<number>): void {
+    this.patchRepo(key, (per) => {
+      let changed = false;
+      const nextMap = new Map(per.jobsByRunId);
+      for (const id of nextMap.keys()) {
+        if (!liveRunIds.has(id)) { nextMap.delete(id); changed = true; }
+      }
+      return changed ? { ...per, jobsByRunId: nextMap } : per;
+    });
   }
 
-  setJobs(runId: number, jobs: readonly Job[]): void {
-    const next = new Map(this.snap.jobsByRunId);
-    next.set(runId, jobs);
-    this.update({ jobsByRunId: next, lastUpdated: new Date() });
+  pruneArtifacts(key: RepoKey, liveRunIds: ReadonlySet<number>): void {
+    this.patchRepo(key, (per) => {
+      let changed = false;
+      const nextMap = new Map(per.artifactsByRunId);
+      for (const id of nextMap.keys()) {
+        if (!liveRunIds.has(id)) { nextMap.delete(id); changed = true; }
+      }
+      return changed ? { ...per, artifactsByRunId: nextMap } : per;
+    });
   }
 
-  setArtifacts(runId: number, artifacts: readonly Artifact[]): void {
-    const next = new Map(this.snap.artifactsByRunId);
-    next.set(runId, artifacts);
-    this.update({ artifactsByRunId: next, lastUpdated: new Date() });
+  // --- settings (per-repo) ------------------------------------------------
+
+  setSecretsStatus(key: RepoKey, status: SecretsStatus, errorMessage: string | null = null): void {
+    this.patchSecrets(key, (s) => ({ ...s, status, errorMessage }));
   }
 
-  pruneJobs(liveRunIds: ReadonlySet<number>): void {
-    let changed = false;
-    const next = new Map(this.snap.jobsByRunId);
-    for (const id of next.keys()) {
-      if (!liveRunIds.has(id)) { next.delete(id); changed = true; }
-    }
-    if (changed) this.update({ jobsByRunId: next });
+  setEnvironments(key: RepoKey, environments: readonly Environment[]): void {
+    this.patchSecrets(key, (s) => ({
+      ...s,
+      environments,
+      status: "ready",
+      errorMessage: null,
+      lastUpdated: new Date(),
+    }));
   }
 
-  pruneArtifacts(liveRunIds: ReadonlySet<number>): void {
-    let changed = false;
-    const next = new Map(this.snap.artifactsByRunId);
-    for (const id of next.keys()) {
-      if (!liveRunIds.has(id)) { next.delete(id); changed = true; }
-    }
-    if (changed) this.update({ artifactsByRunId: next });
+  setSecrets(key: RepoKey, scope: SecretScope, secrets: readonly Secret[]): void {
+    this.patchSecrets(key, (s) => {
+      const next = new Map(s.secretsByScope);
+      next.set(scopeKey(scope), secrets);
+      return { ...s, secretsByScope: next, status: "ready", errorMessage: null, lastUpdated: new Date() };
+    });
+  }
+
+  setVariables(key: RepoKey, scope: SecretScope, variables: readonly Variable[]): void {
+    this.patchSecrets(key, (s) => {
+      const next = new Map(s.variablesByScope);
+      next.set(scopeKey(scope), variables);
+      return { ...s, variablesByScope: next, status: "ready", errorMessage: null, lastUpdated: new Date() };
+    });
+  }
+
+  getSecretsSnapshot(key: RepoKey): SecretsSnapshot {
+    return this.snap.secretsByRepo.get(key) ?? EMPTY_SECRETS_SNAPSHOT;
+  }
+
+  // --- internals ----------------------------------------------------------
+
+  private patchRepo(key: RepoKey, fn: (per: PerRepoState) => PerRepoState): void {
+    const prev = this.snap.repos.get(key);
+    if (!prev) return; // ignore writes for a repo we're not tracking
+    const next = fn(prev);
+    if (next === prev) return;
+    const repos = new Map(this.snap.repos);
+    repos.set(key, next);
+    this.update({ repos });
+  }
+
+  private patchSecrets(key: RepoKey, fn: (s: SecretsSnapshot) => SecretsSnapshot): void {
+    const prev = this.snap.secretsByRepo.get(key) ?? EMPTY_SECRETS_SNAPSHOT;
+    const next = fn(prev);
+    if (next === prev) return;
+    const secretsByRepo = new Map(this.snap.secretsByRepo);
+    secretsByRepo.set(key, next);
+    this.update({ secretsByRepo });
   }
 
   private update(patch: Partial<StoreSnapshot>): void {
@@ -191,4 +234,10 @@ export class WorkflowStore implements vscode.Disposable {
   }
 
   dispose(): void { this.emitter.dispose(); }
+}
+
+function sameKeySet<K, V>(a: ReadonlyMap<K, V>, b: ReadonlyMap<K, V>): boolean {
+  if (a.size !== b.size) return false;
+  for (const k of a.keys()) if (!b.has(k)) return false;
+  return true;
 }

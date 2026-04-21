@@ -62,26 +62,32 @@ export class DiagnosticsService implements vscode.Disposable {
 
   private async reconcile(): Promise<void> {
     const snap = this.store.snapshot();
-    if (!snap.repo) { this.clear(); return; }
+    if (snap.repos.size === 0) { this.clear(); return; }
 
-    // Revoke jobs whose runs are no longer cached.
+    // Revoke jobs whose runs are no longer cached in any repo.
     const liveJobIds = new Set<number>();
-    for (const jobs of snap.jobsByRunId.values()) for (const j of jobs) liveJobIds.add(j.id);
+    for (const per of snap.repos.values()) {
+      for (const jobs of per.jobsByRunId.values()) for (const j of jobs) liveJobIds.add(j.id);
+    }
     for (const jobId of [...this.contributedByJob.keys()]) {
       if (!liveJobIds.has(jobId)) this.revokeJob(jobId);
     }
 
-    // For each completed non-success job, ensure we've ingested its log.
-    for (const jobs of snap.jobsByRunId.values()) {
-      for (const job of jobs) {
-        if (job.status !== "completed") continue;
-        if (job.conclusion === "success" || job.conclusion === "skipped" || job.conclusion === null) continue;
-        if (this.contributedByJob.has(job.id)) continue;
-        if (this.inflight.has(job.id)) continue;
-        const ctx = this.store.resolveJob(job.runId, job.id);
-        if (!ctx) continue;
-        this.inflight.add(job.id);
-        void this.ingestJob(snap.repo, ctx).finally(() => this.inflight.delete(job.id));
+    // For each completed non-success job across all repos, ensure we've
+    // ingested its log. Diagnostics are keyed globally by jobId (safe; job
+    // ids are globally unique on GitHub's side).
+    for (const [key, per] of snap.repos) {
+      for (const jobs of per.jobsByRunId.values()) {
+        for (const job of jobs) {
+          if (job.status !== "completed") continue;
+          if (job.conclusion === "success" || job.conclusion === "skipped" || job.conclusion === null) continue;
+          if (this.contributedByJob.has(job.id)) continue;
+          if (this.inflight.has(job.id)) continue;
+          const ctx = this.store.resolveJob(key, job.runId, job.id);
+          if (!ctx) continue;
+          this.inflight.add(job.id);
+          void this.ingestJob(per.repo, ctx).finally(() => this.inflight.delete(job.id));
+        }
       }
     }
   }

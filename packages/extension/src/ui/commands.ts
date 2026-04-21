@@ -1,8 +1,8 @@
 import * as vscode from "vscode";
 import type { AppCoordinator } from "../app/coordinator.js";
 import { formatAuthFailureMarkdown, type AuthFailure } from "../core/auth/failure.js";
-import type { JobContext } from "../core/domain/types.js";
-import { hasFailed } from "../core/domain/types.js";
+import type { JobContext, RepoCoordinates } from "../core/domain/types.js";
+import { hasFailed, repoKey } from "../core/domain/types.js";
 import { ArtifactService, humanBytes } from "../services/artifact-service.js";
 import type { AuthService } from "../services/auth.js";
 import type { DiagnosticsService } from "../services/diagnostics-service.js";
@@ -16,16 +16,16 @@ import type { LiveSync } from "../services/live-sync.js";
 import type { Logger } from "../util/logger.js";
 import type { LogWebviewService } from "./log-webview-panel.js";
 import { promptDispatchInputs, promptSecretName, promptSecretValue, promptVariableName, promptVariableValue } from "./prompts.js";
-import { ArtifactNode, EnvironmentNode, EnvironmentSubsectionNode, JobNode, RunNode, SecretNode, SettingsSectionNode, StepNode, VariableNode, WorkflowNode } from "./tree-items.js";
+import { ArtifactNode, ArtifactsGroupNode, EnvironmentNode, EnvironmentSubsectionNode, JobNode, RunNode, SecretNode, SettingsSectionNode, StepNode, VariableNode, WorkflowNode, WorkflowsRepoNode } from "./tree-items.js";
 import type { SecretScope } from "../core/domain/secrets.js";
 
 type Handler = (...args: unknown[]) => unknown | Promise<unknown>;
 
 /**
- * Registry + small DSL for declaring commands. Keeping every handler
- * alongside its id (instead of a 200-line `registerCommand` chain in
- * extension.ts) makes it trivial to see what the extension can do, to add
- * new commands without touching composition, and to swap handlers for tests.
+ * Registry + small DSL for declaring commands. Every handler that mutates
+ * state on a specific repo pulls the repo off the node it was invoked from
+ * (every tree node carries `repo: RepoCoordinates`), so nothing here reaches
+ * for a global "current repo" — that concept is gone in multi-repo mode.
  */
 export interface CommandDeps {
   readonly coordinator: AppCoordinator;
@@ -117,7 +117,6 @@ function authCommands({ auth, store }: CommandDeps): CommandDef[] {
 
 function pickAuthFailure(v: unknown): AuthFailure | null {
   if (!v || typeof v !== "object") return null;
-  // Duck-type: plenty of required fields to avoid false positives.
   const obj = v as Partial<AuthFailure>;
   if (typeof obj.kind !== "string" || typeof obj.occurredAt !== "string") return null;
   if (!Array.isArray(obj.requestedScopes)) return null;
@@ -176,20 +175,19 @@ function dispatchCommands(deps: CommandDeps): CommandDef[] {
       id: "workflowMonitor.dispatchWorkflow",
       handler: async (node: unknown) => {
         if (!(node instanceof WorkflowNode)) return;
-        const repo = deps.store.snapshot().repo;
-        const branch = deps.store.snapshot().branch;
         const api = deps.coordinator.api;
-        if (!repo || !api) { vscode.window.showWarningMessage("Sign in to GitHub first."); return; }
-
+        if (!api) { vscode.window.showWarningMessage("Sign in to GitHub first."); return; }
+        const per = deps.store.snapshot().repos.get(repoKey(node.repo));
+        const branch = per?.branch ?? null;
         try {
-          const spec = await deps.definitions.getDispatchSpec(repo, node.workflow, branch);
+          const spec = await deps.definitions.getDispatchSpec(node.repo, node.workflow, branch);
           if (!spec.supported) {
             vscode.window.showWarningMessage(`Workflow "${node.workflow.name}" does not have a workflow_dispatch trigger.`);
             return;
           }
           const collected = await promptDispatchInputs(spec.inputs, branch ?? "main");
           if (!collected) return;
-          await api.dispatchWorkflow(repo, node.workflow.id, collected.ref, collected.inputs);
+          await api.dispatchWorkflow(node.repo, node.workflow.id, collected.ref, collected.inputs);
           vscode.window.showInformationMessage(`Dispatched ${node.workflow.name} on ${collected.ref}.`);
           deps.sync.refresh();
         } catch (err) {
@@ -207,10 +205,8 @@ function artifactCommands(deps: CommandDeps): CommandDef[] {
     {
       id: "workflowMonitor.showArtifacts",
       handler: (node: unknown) => guardRun(deps, node, async (api, repo, run) => {
-        // Prefer the cached list — avoids a round-trip and surfaces the same
-        // set the tree is showing — but fall back to a fresh fetch if the
-        // sync loop hasn't populated the store yet.
-        const cached = deps.store.snapshot().artifactsByRunId.get(run.id);
+        const per = deps.store.snapshot().repos.get(repoKey(repo));
+        const cached = per?.artifactsByRunId.get(run.id);
         const artifacts = cached ?? await api.listArtifacts(repo, run.id);
         if (artifacts.length === 0) { vscode.window.showInformationMessage(`Run #${run.runNumber} has no artifacts.`); return; }
         interface ArtifactPick extends vscode.QuickPickItem { artifact: import("../core/domain/types.js").Artifact }
@@ -232,10 +228,8 @@ function artifactCommands(deps: CommandDeps): CommandDef[] {
       id: "workflowMonitor.downloadArtifact",
       handler: async (node: unknown) => {
         if (!(node instanceof ArtifactNode)) return;
-        const repo = deps.store.snapshot().repo;
-        if (!repo) { vscode.window.showWarningMessage("Sign in to GitHub first."); return; }
         try {
-          await deps.artifacts.saveToDisk(repo, node.artifact);
+          await deps.artifacts.saveToDisk(node.repo, node.artifact);
         } catch (err) {
           vscode.window.showErrorMessage(errMsg(err));
         }
@@ -274,19 +268,19 @@ function secretsCommands(deps: CommandDeps): CommandDef[] {
     {
       id: "workflowMonitor.addSecret",
       handler: async (node: unknown) => {
-        const scope = scopeFromAddContext(node, "secrets");
-        if (!scope) return;
-        const takenNames = collectTakenNames(deps, scope);
-        const name = await promptSecretName({ scopeLabel: scopeLabel(scope), taken: takenNames });
+        const target = scopeFromAddContext(node, "secrets");
+        if (!target) return;
+        const takenNames = collectTakenNames(deps, target.repo, target.scope, "secrets");
+        const name = await promptSecretName({ scopeLabel: scopeLabel(target.repo, target.scope), taken: takenNames });
         if (name === null) return;
         const value = await promptSecretValue({
-          title: `New secret — ${scopeLabel(scope)} · ${name}`,
-          prompt: "The value is encrypted in your browser before leaving; GitHub never sees it in plaintext.",
+          title: `New secret — ${scopeLabel(target.repo, target.scope)} · ${name}`,
+          prompt: "The value is encrypted locally before leaving; GitHub never sees it in plaintext.",
         });
         if (value === null) return;
         try {
-          await deps.secretSync.writeSecret(scope, name, value);
-          vscode.window.showInformationMessage(`Saved secret "${name}" to ${scopeLabel(scope)}.`);
+          await deps.secretSync.writeSecret(target.repo, target.scope, name, value);
+          vscode.window.showInformationMessage(`Saved secret "${name}" to ${scopeLabel(target.repo, target.scope)}.`);
         } catch (err) {
           vscode.window.showErrorMessage(`Failed to save secret: ${errMsg(err)}`);
         }
@@ -297,12 +291,12 @@ function secretsCommands(deps: CommandDeps): CommandDef[] {
       handler: async (node: unknown) => {
         if (!(node instanceof SecretNode)) return;
         const value = await promptSecretValue({
-          title: `Update secret — ${scopeLabel(node.scope)} · ${node.secret.name}`,
+          title: `Update secret — ${scopeLabel(node.repo, node.scope)} · ${node.secret.name}`,
           prompt: "Enter the new value. The existing value is not shown — GitHub never returns secret values.",
         });
         if (value === null) return;
         try {
-          await deps.secretSync.writeSecret(node.scope, node.secret.name, value);
+          await deps.secretSync.writeSecret(node.repo, node.scope, node.secret.name, value);
           vscode.window.showInformationMessage(`Updated "${node.secret.name}".`);
         } catch (err) {
           vscode.window.showErrorMessage(`Failed to update secret: ${errMsg(err)}`);
@@ -314,13 +308,13 @@ function secretsCommands(deps: CommandDeps): CommandDef[] {
       handler: async (node: unknown) => {
         if (!(node instanceof SecretNode)) return;
         const confirm = await vscode.window.showWarningMessage(
-          `Delete secret "${node.secret.name}" from ${scopeLabel(node.scope)}? This cannot be undone.`,
+          `Delete secret "${node.secret.name}" from ${scopeLabel(node.repo, node.scope)}? This cannot be undone.`,
           { modal: true },
           "Delete",
         );
         if (confirm !== "Delete") return;
         try {
-          await deps.secretSync.deleteSecret(node.scope, node.secret.name);
+          await deps.secretSync.deleteSecret(node.repo, node.scope, node.secret.name);
           vscode.window.showInformationMessage(`Deleted "${node.secret.name}".`);
         } catch (err) {
           vscode.window.showErrorMessage(`Failed to delete secret: ${errMsg(err)}`);
@@ -345,18 +339,18 @@ function variablesCommands(deps: CommandDeps): CommandDef[] {
     {
       id: "workflowMonitor.addVariable",
       handler: async (node: unknown) => {
-        const scope = scopeFromAddContext(node, "variables");
-        if (!scope) return;
-        const taken = collectTakenVariableNames(deps, scope);
-        const name = await promptVariableName({ scopeLabel: scopeLabel(scope), taken });
+        const target = scopeFromAddContext(node, "variables");
+        if (!target) return;
+        const taken = collectTakenNames(deps, target.repo, target.scope, "variables");
+        const name = await promptVariableName({ scopeLabel: scopeLabel(target.repo, target.scope), taken });
         if (name === null) return;
         const value = await promptVariableValue({
-          title: `New variable — ${scopeLabel(scope)} · ${name}`,
+          title: `New variable — ${scopeLabel(target.repo, target.scope)} · ${name}`,
         });
         if (value === null) return;
         try {
-          await deps.secretSync.writeVariable(scope, name, value, false);
-          vscode.window.showInformationMessage(`Saved variable "${name}" to ${scopeLabel(scope)}.`);
+          await deps.secretSync.writeVariable(target.repo, target.scope, name, value, false);
+          vscode.window.showInformationMessage(`Saved variable "${name}" to ${scopeLabel(target.repo, target.scope)}.`);
         } catch (err) {
           vscode.window.showErrorMessage(`Failed to save variable: ${errMsg(err)}`);
         }
@@ -367,13 +361,13 @@ function variablesCommands(deps: CommandDeps): CommandDef[] {
       handler: async (node: unknown) => {
         if (!(node instanceof VariableNode)) return;
         const value = await promptVariableValue({
-          title: `Update variable — ${scopeLabel(node.scope)} · ${node.variable.name}`,
+          title: `Update variable — ${scopeLabel(node.repo, node.scope)} · ${node.variable.name}`,
           current: node.variable.value,
         });
         if (value === null) return;
-        if (value === node.variable.value) return; // no-op
+        if (value === node.variable.value) return;
         try {
-          await deps.secretSync.writeVariable(node.scope, node.variable.name, value, true);
+          await deps.secretSync.writeVariable(node.repo, node.scope, node.variable.name, value, true);
           vscode.window.showInformationMessage(`Updated "${node.variable.name}".`);
         } catch (err) {
           vscode.window.showErrorMessage(`Failed to update variable: ${errMsg(err)}`);
@@ -385,13 +379,13 @@ function variablesCommands(deps: CommandDeps): CommandDef[] {
       handler: async (node: unknown) => {
         if (!(node instanceof VariableNode)) return;
         const confirm = await vscode.window.showWarningMessage(
-          `Delete variable "${node.variable.name}" from ${scopeLabel(node.scope)}? This cannot be undone.`,
+          `Delete variable "${node.variable.name}" from ${scopeLabel(node.repo, node.scope)}? This cannot be undone.`,
           { modal: true },
           "Delete",
         );
         if (confirm !== "Delete") return;
         try {
-          await deps.secretSync.deleteVariable(node.scope, node.variable.name);
+          await deps.secretSync.deleteVariable(node.repo, node.scope, node.variable.name);
           vscode.window.showInformationMessage(`Deleted "${node.variable.name}".`);
         } catch (err) {
           vscode.window.showErrorMessage(`Failed to delete variable: ${errMsg(err)}`);
@@ -401,40 +395,36 @@ function variablesCommands(deps: CommandDeps): CommandDef[] {
   ];
 }
 
+interface AddTarget { readonly repo: RepoCoordinates; readonly scope: SecretScope }
+
 /**
- * Map the node a user right-clicked (or hit an inline "+" on) to the scope
- * we should write to. Accepts:
- *   - top-level `Secrets`/`Variables` section → repo scope
- *   - an environment row → env scope (add from the env header)
- *   - an environment's `Secrets`/`Variables` subsection → env scope
+ * Resolve a `(repo, scope)` pair from the tree node the user invoked from.
+ * Every relevant node now carries its repo explicitly.
  */
-function scopeFromAddContext(node: unknown, kind: "secrets" | "variables"): SecretScope | null {
+function scopeFromAddContext(node: unknown, kind: "secrets" | "variables"): AddTarget | null {
   if (node instanceof SettingsSectionNode && node.section === kind) {
-    return { kind: "repo" };
+    return { repo: node.repo, scope: { kind: "repo" } };
   }
   if (node instanceof EnvironmentNode) {
-    return { kind: "environment", name: node.environment.name };
+    return { repo: node.repo, scope: { kind: "environment", name: node.environment.name } };
   }
   if (node instanceof EnvironmentSubsectionNode && node.section === kind) {
-    return { kind: "environment", name: node.environment.name };
+    return { repo: node.repo, scope: { kind: "environment", name: node.environment.name } };
   }
   return null;
 }
 
-function scopeLabel(scope: SecretScope): string {
-  return scope.kind === "repo" ? "repository" : `environment "${scope.name}"`;
+function scopeLabel(repo: RepoCoordinates, scope: SecretScope): string {
+  const base = `${repo.owner}/${repo.repo}`;
+  return scope.kind === "repo" ? `${base} · repository` : `${base} · environment "${scope.name}"`;
 }
 
-function collectTakenNames(deps: CommandDeps, scope: SecretScope): readonly string[] {
-  const snap = deps.store.getSecretsSnapshot();
+function collectTakenNames(deps: CommandDeps, repo: RepoCoordinates, scope: SecretScope, kind: "secrets" | "variables"): readonly string[] {
+  const snap = deps.store.getSecretsSnapshot(repoKey(repo));
   const key = scope.kind === "repo" ? "repo" : `env:${scope.name}`;
-  return snap.secretsByScope.get(key)?.map((s) => s.name) ?? [];
-}
-
-function collectTakenVariableNames(deps: CommandDeps, scope: SecretScope): readonly string[] {
-  const snap = deps.store.getSecretsSnapshot();
-  const key = scope.kind === "repo" ? "repo" : `env:${scope.name}`;
-  return snap.variablesByScope.get(key)?.map((v) => v.name) ?? [];
+  const map = kind === "secrets" ? snap.secretsByScope : snap.variablesByScope;
+  const items = map.get(key) ?? [];
+  return items.map((x) => x.name);
 }
 
 // --- view preferences ------------------------------------------------------
@@ -481,8 +471,8 @@ function logCommands(deps: CommandDeps): CommandDef[] {
       handler: async (node: unknown) => {
         const jobs = collectFailingJobs(deps.store, node);
         if (jobs.length === 0) { vscode.window.showInformationMessage("Nothing failed here."); return; }
+        const repo = repoFromNode(node);
         const api = deps.coordinator.api;
-        const repo = deps.store.snapshot().repo;
         if (!api || !repo) { vscode.window.showWarningMessage("Sign in to GitHub first."); return; }
         try {
           const parts = await Promise.all(jobs.map((ctx) => logs.getFailureContext(repo, ctx)));
@@ -500,17 +490,17 @@ function logCommands(deps: CommandDeps): CommandDef[] {
       },
     },
     {
-      // Programmatic entry point so non-tree callers (e.g. notifications)
-      // can trigger "copy failure context" with bare IDs.
+      // Programmatic entry point so non-tree callers (e.g. notifications) can
+      // trigger "copy failure context" by repo key + job id + run id.
       id: "workflowMonitor.copyFailureContextForJob",
-      handler: async (jobId: unknown, runId: unknown) => {
-        if (typeof jobId !== "number" || typeof runId !== "number") return;
-        const ctx = deps.store.resolveJob(runId, jobId);
-        const repo = deps.store.snapshot().repo;
+      handler: async (key: unknown, jobId: unknown, runId: unknown) => {
+        if (typeof key !== "string" || typeof jobId !== "number" || typeof runId !== "number") return;
+        const ctx = deps.store.resolveJob(key, runId, jobId);
+        const per = deps.store.snapshot().repos.get(key);
         const api = deps.coordinator.api;
-        if (!ctx || !repo || !api) return;
+        if (!ctx || !per || !api) return;
         try {
-          const failure = await logs.getFailureContext(repo, ctx);
+          const failure = await logs.getFailureContext(per.repo, ctx);
           await vscode.env.clipboard.writeText(failure.markdown);
           vscode.window.showInformationMessage(`Copied failure context for ${ctx.job.name}.`);
         } catch (err) {
@@ -523,24 +513,18 @@ function logCommands(deps: CommandDeps): CommandDef[] {
 
 // --- helpers ---------------------------------------------------------------
 
-/**
- * Given a tree node, return every failing job that falls within its scope.
- * Lets a single "Copy Failure Context" command service leaves and parents
- * without branching in the handler.
- *
- *   StepNode (failed)     → [owning job]       (the step's job; step context flows via its steps[])
- *   JobNode (failed)      → [this job]
- *   RunNode (failed)      → failed jobs of the run
- *   WorkflowNode (failed) → failed jobs of the latest run
- */
 function collectFailingJobs(store: WorkflowStore, node: unknown): JobContext[] {
-  const snap = store.snapshot();
+  const repo = repoFromNode(node);
+  if (!repo) return [];
+  const key = repoKey(repo);
+  const per = store.snapshot().repos.get(key);
+  if (!per) return [];
   const resolveFailingJobsForRun = (runId: number): JobContext[] => {
-    const jobs = snap.jobsByRunId.get(runId) ?? [];
+    const jobs = per.jobsByRunId.get(runId) ?? [];
     const out: JobContext[] = [];
     for (const j of jobs) {
       if (!hasFailed(j)) continue;
-      const ctx = store.resolveJob(runId, j.id);
+      const ctx = store.resolveJob(key, runId, j.id);
       if (ctx) out.push(ctx);
     }
     return out;
@@ -548,12 +532,12 @@ function collectFailingJobs(store: WorkflowStore, node: unknown): JobContext[] {
 
   if (node instanceof StepNode) {
     if (!hasFailed(node.step)) return [];
-    const ctx = store.resolveJob(node.job.runId, node.job.id);
+    const ctx = store.resolveJob(key, node.job.runId, node.job.id);
     return ctx ? [ctx] : [];
   }
   if (node instanceof JobNode) {
     if (!hasFailed(node.job)) return [];
-    const ctx = store.resolveJob(node.job.runId, node.job.id);
+    const ctx = store.resolveJob(key, node.job.runId, node.job.id);
     return ctx ? [ctx] : [];
   }
   if (node instanceof RunNode) {
@@ -567,30 +551,41 @@ function collectFailingJobs(store: WorkflowStore, node: unknown): JobContext[] {
   return [];
 }
 
+function repoFromNode(node: unknown): RepoCoordinates | null {
+  if (node instanceof WorkflowsRepoNode) return node.repo;
+  if (node instanceof WorkflowNode) return node.repo;
+  if (node instanceof RunNode) return node.repo;
+  if (node instanceof JobNode) return node.repo;
+  if (node instanceof StepNode) return node.repo;
+  if (node instanceof ArtifactsGroupNode) return node.repo;
+  if (node instanceof ArtifactNode) return node.repo;
+  return null;
+}
+
 function pickNodeUrl(node: unknown, store: WorkflowStore): string | null {
   if (node instanceof WorkflowNode) return node.workflow.htmlUrl;
   if (node instanceof RunNode) return node.run.htmlUrl;
   if (node instanceof JobNode) return node.job.htmlUrl;
   if (node instanceof StepNode) return node.job.htmlUrl;
+  if (node instanceof WorkflowsRepoNode) return `https://github.com/${node.repo.owner}/${node.repo.repo}/actions`;
+  // Fallback: pick the first tracked repo's actions page (single-repo case).
   const snap = store.snapshot();
-  for (const runs of snap.runsByWorkflowId.values()) {
-    if (runs[0]) return runs[0].htmlUrl;
+  for (const per of snap.repos.values()) {
+    return `https://github.com/${per.repo.owner}/${per.repo.repo}/actions`;
   }
-  if (snap.repo) return `https://github.com/${snap.repo.owner}/${snap.repo.repo}/actions`;
   return null;
 }
 
 async function guardRun(
   deps: CommandDeps,
   node: unknown,
-  body: (api: NonNullable<AppCoordinator["api"]>, repo: { owner: string; repo: string }, run: RunNode["run"]) => Promise<void>,
+  body: (api: NonNullable<AppCoordinator["api"]>, repo: RepoCoordinates, run: RunNode["run"]) => Promise<void>,
 ): Promise<void> {
   if (!(node instanceof RunNode)) return;
   const api = deps.coordinator.api;
-  const repo = deps.store.snapshot().repo;
-  if (!api || !repo) { vscode.window.showWarningMessage("Sign in to GitHub first."); return; }
+  if (!api) { vscode.window.showWarningMessage("Sign in to GitHub first."); return; }
   try {
-    await body(api, repo, node.run);
+    await body(api, node.repo, node.run);
   } catch (err) {
     vscode.window.showErrorMessage(errMsg(err));
   }
@@ -601,20 +596,21 @@ async function guardJob(
   node: unknown,
   body: (
     api: NonNullable<AppCoordinator["api"]>,
-    repo: { owner: string; repo: string },
+    repo: RepoCoordinates,
     ctx: NonNullable<ReturnType<WorkflowStore["resolveJob"]>>,
   ) => Promise<void>,
 ): Promise<void> {
-  const jobId = jobIdFromNode(node);
-  const runId = runIdFromNode(node);
+  const repo = repoFromNode(node);
+  if (!repo) return;
+  const key = repoKey(repo);
+  const { jobId, runId } = jobIdsFromNode(node);
   if (jobId == null || runId == null) return;
 
-  const ctx = deps.store.resolveJob(runId, jobId);
+  const ctx = deps.store.resolveJob(key, runId, jobId);
   if (!ctx) { vscode.window.showWarningMessage("Job data not loaded yet — try again in a moment."); return; }
 
   const api = deps.coordinator.api;
-  const repo = deps.store.snapshot().repo;
-  if (!api || !repo) { vscode.window.showWarningMessage("Sign in to GitHub first."); return; }
+  if (!api) { vscode.window.showWarningMessage("Sign in to GitHub first."); return; }
   try {
     await body(api, repo, ctx);
   } catch (err) {
@@ -622,16 +618,10 @@ async function guardJob(
   }
 }
 
-function jobIdFromNode(node: unknown): number | null {
-  if (node instanceof JobNode) return node.job.id;
-  if (node instanceof StepNode) return node.job.id;
-  return null;
-}
-
-function runIdFromNode(node: unknown): number | null {
-  if (node instanceof JobNode) return node.job.runId;
-  if (node instanceof StepNode) return node.job.runId;
-  return null;
+function jobIdsFromNode(node: unknown): { jobId: number | null; runId: number | null } {
+  if (node instanceof JobNode) return { jobId: node.job.id, runId: node.job.runId };
+  if (node instanceof StepNode) return { jobId: node.job.id, runId: node.job.runId };
+  return { jobId: null, runId: null };
 }
 
 function errMsg(err: unknown): string {

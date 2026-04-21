@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
-import type { JobContext, WorkflowRun } from "../core/domain/types.js";
+import type { JobContext, RepoCoordinates, RepoKey, WorkflowRun } from "../core/domain/types.js";
+import { repoKey } from "../core/domain/types.js";
 import type { WorkflowStore } from "./workflow-store.js";
 
 export interface NotificationConfig {
@@ -46,27 +47,30 @@ export class NotificationService implements vscode.Disposable {
     const snap = this.store.snapshot();
     // On first state observation, seed and bail — we don't notify on initial load.
     if (!this.seeded) {
-      for (const runs of snap.runsByWorkflowId.values()) for (const r of runs) this.notified.add(r.id);
+      for (const per of snap.repos.values()) {
+        for (const runs of per.runsByWorkflowId.values()) for (const r of runs) this.notified.add(r.id);
+      }
       this.seeded = true;
       this.persist();
       return;
     }
 
-    for (const runs of snap.runsByWorkflowId.values()) {
-      for (const r of runs) {
-        if (r.status !== "completed") continue;
-        if (this.notified.has(r.id)) continue;
-        this.notified.add(r.id);
-        this.showFor(r);
+    for (const per of snap.repos.values()) {
+      for (const [workflowId, runs] of per.runsByWorkflowId) {
+        for (const r of runs) {
+          if (r.status !== "completed") continue;
+          if (this.notified.has(r.id)) continue;
+          this.notified.add(r.id);
+          this.showFor(r, per.repo, per.workflows.find((w) => w.id === workflowId)?.name ?? "workflow");
+        }
       }
     }
     this.trimNotifiedSet(snap);
     this.persist();
   }
 
-  private showFor(run: WorkflowRun): void {
-    const lookup = this.store.resolveRun(run.id);
-    const workflowName = lookup?.workflowName ?? "workflow";
+  private showFor(run: WorkflowRun, repo: RepoCoordinates, workflowName: string): void {
+    const key = repoKey(repo);
     const branch = run.headBranch ? ` on \`${run.headBranch}\`` : "";
     const openAction = "Open on GitHub";
     const copyFailure = "Copy Failure Context";
@@ -84,7 +88,7 @@ export class NotificationService implements vscode.Disposable {
       case "startup_failure":
       case "timed_out":
         if (this.config.notifyOnFailure) {
-          const failingJobCtx = findFailingJob(this.store, run.id);
+          const failingJobCtx = findFailingJob(this.store, key, run.id);
           const actions = [openAction];
           if (failingJobCtx) actions.unshift(copyFailure);
           vscode.window.showErrorMessage(
@@ -94,7 +98,12 @@ export class NotificationService implements vscode.Disposable {
             if (choice === openAction) void vscode.env.openExternal(vscode.Uri.parse(run.htmlUrl));
             else if (choice === copyFailure && failingJobCtx) {
               // Delegate to the existing command so we stay DRY.
-              void vscode.commands.executeCommand("workflowMonitor.copyFailureContextForJob", failingJobCtx.job.id, failingJobCtx.run.id);
+              void vscode.commands.executeCommand(
+                "workflowMonitor.copyFailureContextForJob",
+                key,
+                failingJobCtx.job.id,
+                failingJobCtx.run.id,
+              );
             }
           });
         }
@@ -116,7 +125,9 @@ export class NotificationService implements vscode.Disposable {
   /** Keep the notified set from growing unbounded — evict runs the store no longer knows. */
   private trimNotifiedSet(snap: ReturnType<WorkflowStore["snapshot"]>): void {
     const live = new Set<number>();
-    for (const runs of snap.runsByWorkflowId.values()) for (const r of runs) live.add(r.id);
+    for (const per of snap.repos.values()) {
+      for (const runs of per.runsByWorkflowId.values()) for (const r of runs) live.add(r.id);
+    }
     for (const id of [...this.notified]) if (!live.has(id)) this.notified.delete(id);
   }
 
@@ -125,11 +136,12 @@ export class NotificationService implements vscode.Disposable {
   }
 }
 
-function findFailingJob(store: WorkflowStore, runId: number): JobContext | null {
-  const snap = store.snapshot();
-  const jobs = snap.jobsByRunId.get(runId);
+function findFailingJob(store: WorkflowStore, key: RepoKey, runId: number): JobContext | null {
+  const per = store.snapshot().repos.get(key);
+  if (!per) return null;
+  const jobs = per.jobsByRunId.get(runId);
   if (!jobs) return null;
   const failing = jobs.find((j) => j.conclusion === "failure" || j.conclusion === "timed_out" || j.conclusion === "startup_failure");
   if (!failing) return null;
-  return store.resolveJob(runId, failing.id);
+  return store.resolveJob(key, runId, failing.id);
 }

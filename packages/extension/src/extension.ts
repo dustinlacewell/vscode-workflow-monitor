@@ -41,7 +41,8 @@ export function activate(context: vscode.ExtensionContext): void {
   const apiProvider = () => apiHolder.coord?.api ?? null;
 
   const sync = new LiveSync(apiProvider, store, log, readSyncConfig());
-  const coordinator = new AppCoordinator(auth, repoWatcher, store, sync, log);
+  const secretSync = new SecretSync(apiProvider, store, log);
+  const coordinator = new AppCoordinator(auth, repoWatcher, store, sync, secretSync, log);
   apiHolder.coord = coordinator;
 
   // --- higher-level feature services -------------------------------------
@@ -51,13 +52,6 @@ export function activate(context: vscode.ExtensionContext): void {
   const definitions = new WorkflowDefinitionService(apiProvider);
   const diagnostics = new DiagnosticsService(logs, store, log);
   const notifications = new NotificationService(store, context.workspaceState, readNotificationConfig());
-  const secretSync = new SecretSync(apiProvider, store, log);
-
-  // Keep secretSync's repo pointer aligned with the live-sync one so it
-  // knows which repo to fetch for.
-  context.subscriptions.push(
-    store.onDidChange(() => secretSync.setRepo(store.snapshot().repo)),
-  );
 
   context.subscriptions.push(
     store, auth, repoWatcher, viewState, sync, coordinator,

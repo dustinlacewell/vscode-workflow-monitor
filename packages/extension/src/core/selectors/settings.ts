@@ -1,22 +1,13 @@
 import type { Environment, Secret, SecretScope, Variable } from "../domain/secrets.js";
 import { scopeKey } from "../domain/secrets.js";
 import type { RepoCoordinates } from "../domain/types.js";
+import { EMPTY_SECRETS_SNAPSHOT, type SecretsSnapshot } from "../store/secrets-snapshot.js";
 import type { StoreSnapshot } from "../store/snapshot.js";
 
-/**
- * Tri-state per-scope list. Absence = not yet fetched (render "loading…"),
- * empty array = fetched-empty, populated = render the items.
- */
 export type ScopeListView<T> =
   | { kind: "loading" }
   | { kind: "items"; items: readonly T[] };
 
-/**
- * View-model for a single environment under the Settings tree. Each env owns
- * its own Secrets and Variables sub-sections — that's the whole point of
- * having the Environments section, rather than making it a parallel "flat
- * list of env names" that duplicates what Secrets already tells us.
- */
 export interface EnvironmentView {
   readonly environment: Environment;
   readonly secrets: ScopeListView<Secret>;
@@ -41,15 +32,19 @@ export type SettingsView =
   | { kind: "repos"; repos: readonly SettingsRepoView[] };
 
 export function selectSettingsView(snap: StoreSnapshot): SettingsView {
-  if (!snap.repo) {
+  if (snap.repos.size === 0) {
     if (snap.status === "idle") return { kind: "idle" };
     return { kind: "no-repo" };
   }
-  return { kind: "repos", repos: [buildRepoView(snap.repo, snap)] };
+  const repos: SettingsRepoView[] = [];
+  for (const per of snap.repos.values()) {
+    const sec = snap.secretsByRepo.get(`${per.repo.owner}/${per.repo.repo}`) ?? EMPTY_SECRETS_SNAPSHOT;
+    repos.push(buildRepoView(per.repo, sec));
+  }
+  return { kind: "repos", repos };
 }
 
-function buildRepoView(repo: RepoCoordinates, snap: StoreSnapshot): SettingsRepoView {
-  const s = snap.secrets;
+function buildRepoView(repo: RepoCoordinates, s: SecretsSnapshot): SettingsRepoView {
   if (s.status === "error") {
     const error = { kind: "error" as const, errorMessage: s.errorMessage ?? "unknown" };
     return {
@@ -61,34 +56,33 @@ function buildRepoView(repo: RepoCoordinates, snap: StoreSnapshot): SettingsRepo
   }
   return {
     repo,
-    repoSecrets: selectSecretScope(snap, { kind: "repo" }),
-    repoVariables: selectVariableScope(snap, { kind: "repo" }),
-    environments: selectEnvironmentsSection(snap),
+    repoSecrets: selectSecretScope(s, { kind: "repo" }),
+    repoVariables: selectVariableScope(s, { kind: "repo" }),
+    environments: selectEnvironmentsSection(s),
   };
 }
 
-function selectEnvironmentsSection(snap: StoreSnapshot): SectionListView<EnvironmentView> {
-  const s = snap.secrets;
+function selectEnvironmentsSection(s: SecretsSnapshot): SectionListView<EnvironmentView> {
   if (s.status === "idle") return { kind: "loading" };
   if (s.status === "loading" && s.environments.length === 0) return { kind: "loading" };
   const items = [...s.environments]
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((env): EnvironmentView => ({
       environment: env,
-      secrets: selectSecretScope(snap, { kind: "environment", name: env.name }),
-      variables: selectVariableScope(snap, { kind: "environment", name: env.name }),
+      secrets: selectSecretScope(s, { kind: "environment", name: env.name }),
+      variables: selectVariableScope(s, { kind: "environment", name: env.name }),
     }));
   return { kind: "items", items };
 }
 
-function selectSecretScope(snap: StoreSnapshot, scope: SecretScope): ScopeListView<Secret> {
-  const items = snap.secrets.secretsByScope.get(scopeKey(scope));
+function selectSecretScope(s: SecretsSnapshot, scope: SecretScope): ScopeListView<Secret> {
+  const items = s.secretsByScope.get(scopeKey(scope));
   if (items === undefined) return { kind: "loading" };
   return { kind: "items", items: sortNamed(items) };
 }
 
-function selectVariableScope(snap: StoreSnapshot, scope: SecretScope): ScopeListView<Variable> {
-  const items = snap.secrets.variablesByScope.get(scopeKey(scope));
+function selectVariableScope(s: SecretsSnapshot, scope: SecretScope): ScopeListView<Variable> {
+  const items = s.variablesByScope.get(scopeKey(scope));
   if (items === undefined) return { kind: "loading" };
   return { kind: "items", items: sortNamed(items) };
 }

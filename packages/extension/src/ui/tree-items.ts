@@ -16,6 +16,7 @@ function failSuffix(item: { status: RunStatus; conclusion: RunConclusion }): "" 
 
 export type TreeNode =
   | MessageNode
+  | WorkflowsRepoNode
   | WorkflowNode
   | RunNode
   | JobNode
@@ -28,6 +29,25 @@ export type TreeNode =
   | EnvironmentSubsectionNode
   | SecretNode
   | VariableNode;
+
+/**
+ * Root-level node in the Workflows tree when the workspace tracks more than
+ * one repo. Wraps a single repo's sub-tree (workflows → runs → jobs → steps).
+ * When only one repo is tracked the provider skips this wrapper entirely.
+ */
+export class WorkflowsRepoNode extends vscode.TreeItem {
+  readonly kind = "workflows-repo" as const;
+  constructor(readonly repo: RepoCoordinates, workflowCount: number, branch: string | null) {
+    super(`${repo.owner}/${repo.repo}`, vscode.TreeItemCollapsibleState.Expanded);
+    this.id = `workflows-repo:${repo.owner}/${repo.repo}`;
+    const parts: string[] = [];
+    if (branch) parts.push(branch);
+    if (workflowCount > 0) parts.push(`${workflowCount} workflow${workflowCount === 1 ? "" : "s"}`);
+    this.description = parts.join(" · ");
+    this.iconPath = new vscode.ThemeIcon("repo");
+    this.contextValue = "workflows-repo";
+  }
+}
 
 export class MessageNode extends vscode.TreeItem {
   readonly kind = "message" as const;
@@ -43,12 +63,13 @@ export class MessageNode extends vscode.TreeItem {
 export class WorkflowNode extends vscode.TreeItem {
   readonly kind = "workflow" as const;
   constructor(
+    readonly repo: RepoCoordinates,
     readonly workflow: Workflow,
     readonly latestRun: WorkflowRun | null,
     runCount: number,
   ) {
     super(workflow.name, vscode.TreeItemCollapsibleState.Collapsed);
-    this.id = `workflow:${workflow.id}`;
+    this.id = `workflow:${repo.owner}/${repo.repo}:${workflow.id}`;
     this.description = latestRun
       ? `#${latestRun.runNumber} · ${latestRun.headBranch ?? "?"}`
       : "no runs yet";
@@ -62,9 +83,9 @@ export class WorkflowNode extends vscode.TreeItem {
 
 export class RunNode extends vscode.TreeItem {
   readonly kind = "run" as const;
-  constructor(readonly run: WorkflowRun) {
+  constructor(readonly repo: RepoCoordinates, readonly run: WorkflowRun) {
     super(`#${run.runNumber} · ${run.displayTitle}`, vscode.TreeItemCollapsibleState.Collapsed);
-    this.id = `run:${run.id}`;
+    this.id = `run:${repo.owner}/${repo.repo}:${run.id}`;
     const parts = [run.event, run.headBranch, run.actorLogin].filter(Boolean);
     this.description = parts.join(" · ");
     this.tooltip = buildRunTooltip(run);
@@ -75,14 +96,14 @@ export class RunNode extends vscode.TreeItem {
 
 export class JobNode extends vscode.TreeItem {
   readonly kind = "job" as const;
-  constructor(readonly job: Job) {
+  constructor(readonly repo: RepoCoordinates, readonly job: Job) {
     super(
       job.name,
       job.steps.length > 0
         ? vscode.TreeItemCollapsibleState.Collapsed
         : vscode.TreeItemCollapsibleState.None,
     );
-    this.id = `job:${job.id}`;
+    this.id = `job:${repo.owner}/${repo.repo}:${job.id}`;
     this.description = describeJobTiming(job);
     this.tooltip = new vscode.MarkdownString(
       `**${job.name}**\n\nstatus: \`${job.status}\`${job.conclusion ? ` · conclusion: \`${job.conclusion}\`` : ""}${job.steps.length ? `\n\n${job.steps.length} steps` : ""}`,
@@ -95,14 +116,18 @@ export class JobNode extends vscode.TreeItem {
 
 export class ArtifactsGroupNode extends vscode.TreeItem {
   readonly kind = "artifacts-group" as const;
-  constructor(readonly run: WorkflowRun, readonly artifacts: readonly Artifact[] | null) {
+  constructor(
+    readonly repo: RepoCoordinates,
+    readonly run: WorkflowRun,
+    readonly artifacts: readonly Artifact[] | null,
+  ) {
     // null => loading; empty array is filtered out upstream (we never show it)
     const count = artifacts?.length ?? 0;
     super(
       "Artifacts",
       count > 0 ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
     );
-    this.id = `artifacts:${run.id}`;
+    this.id = `artifacts:${repo.owner}/${repo.repo}:${run.id}`;
     this.description = artifacts === null ? "loading…" : `${count}`;
     this.iconPath = new vscode.ThemeIcon("archive");
     this.tooltip = artifacts === null
@@ -114,9 +139,13 @@ export class ArtifactsGroupNode extends vscode.TreeItem {
 
 export class ArtifactNode extends vscode.TreeItem {
   readonly kind = "artifact" as const;
-  constructor(readonly run: WorkflowRun, readonly artifact: Artifact) {
+  constructor(
+    readonly repo: RepoCoordinates,
+    readonly run: WorkflowRun,
+    readonly artifact: Artifact,
+  ) {
     super(artifact.name, vscode.TreeItemCollapsibleState.None);
-    this.id = `artifact:${artifact.id}`;
+    this.id = `artifact:${repo.owner}/${repo.repo}:${artifact.id}`;
     const parts = [humanBytes(artifact.sizeBytes)];
     if (artifact.expired) parts.push("expired");
     this.description = parts.join(" · ");
@@ -147,9 +176,9 @@ function buildArtifactTooltip(run: WorkflowRun, artifact: Artifact): vscode.Mark
 
 export class StepNode extends vscode.TreeItem {
   readonly kind = "step" as const;
-  constructor(readonly step: Step, readonly job: Job) {
+  constructor(readonly repo: RepoCoordinates, readonly step: Step, readonly job: Job) {
     super(`${step.number}. ${step.name}`, vscode.TreeItemCollapsibleState.None);
-    this.id = `step:${job.id}:${step.number}`;
+    this.id = `step:${repo.owner}/${repo.repo}:${job.id}:${step.number}`;
     this.description = describeStepTiming(step);
     this.tooltip = new vscode.MarkdownString(
       `**${step.name}**\n\nstatus: \`${step.status}\`${step.conclusion ? ` · conclusion: \`${step.conclusion}\`` : ""}`,
@@ -186,9 +215,13 @@ export class SettingsRepoNode extends vscode.TreeItem {
  */
 export class SettingsSectionNode extends vscode.TreeItem {
   readonly kind = "settings-section" as const;
-  constructor(readonly section: SettingsSectionKind, count?: number | "loading") {
+  constructor(
+    readonly repo: RepoCoordinates,
+    readonly section: SettingsSectionKind,
+    count?: number | "loading",
+  ) {
     super(SECTION_LABEL[section], vscode.TreeItemCollapsibleState.Collapsed);
-    this.id = `settings-section:${section}`;
+    this.id = `settings-section:${repo.owner}/${repo.repo}:${section}`;
     if (count === "loading") this.description = "loading…";
     else if (typeof count === "number") this.description = `${count}`;
     this.iconPath = new vscode.ThemeIcon(SECTION_ICON[section]);
@@ -215,9 +248,9 @@ const SECTION_ICON: Record<SettingsSectionKind, string> = {
  */
 export class EnvironmentNode extends vscode.TreeItem {
   readonly kind = "environment" as const;
-  constructor(readonly environment: Environment) {
+  constructor(readonly repo: RepoCoordinates, readonly environment: Environment) {
     super(environment.name, vscode.TreeItemCollapsibleState.Collapsed);
-    this.id = `environment:${environment.name}`;
+    this.id = `environment:${repo.owner}/${repo.repo}:${environment.name}`;
     if (environment.protectionRuleCount > 0) {
       this.description = `${environment.protectionRuleCount} protection rule${environment.protectionRuleCount === 1 ? "" : "s"}`;
     }
@@ -240,12 +273,13 @@ export class EnvironmentNode extends vscode.TreeItem {
 export class EnvironmentSubsectionNode extends vscode.TreeItem {
   readonly kind = "environment-subsection" as const;
   constructor(
+    readonly repo: RepoCoordinates,
     readonly environment: Environment,
     readonly section: "secrets" | "variables",
     count?: number | "loading",
   ) {
     super(section === "secrets" ? "Secrets" : "Variables", vscode.TreeItemCollapsibleState.Collapsed);
-    this.id = `env-subsection:${environment.name}:${section}`;
+    this.id = `env-subsection:${repo.owner}/${repo.repo}:${environment.name}:${section}`;
     if (count === "loading") this.description = "loading…";
     else if (typeof count === "number") this.description = `${count}`;
     this.iconPath = new vscode.ThemeIcon(section === "secrets" ? "lock" : "symbol-string");
@@ -257,9 +291,9 @@ export class EnvironmentSubsectionNode extends vscode.TreeItem {
 
 export class SecretNode extends vscode.TreeItem {
   readonly kind = "secret" as const;
-  constructor(readonly scope: SecretScope, readonly secret: Secret) {
+  constructor(readonly repo: RepoCoordinates, readonly scope: SecretScope, readonly secret: Secret) {
     super(secret.name, vscode.TreeItemCollapsibleState.None);
-    this.id = `secret:${scopeIdPart(scope)}:${secret.name}`;
+    this.id = `secret:${repo.owner}/${repo.repo}:${scopeIdPart(scope)}:${secret.name}`;
     this.description = `updated ${formatRelative(secret.updatedAt)}`;
     this.iconPath = new vscode.ThemeIcon("lock");
     this.tooltip = new vscode.MarkdownString(
@@ -289,9 +323,9 @@ function scopeIdPart(scope: SecretScope): string {
  */
 export class VariableNode extends vscode.TreeItem {
   readonly kind = "variable" as const;
-  constructor(readonly scope: SecretScope, readonly variable: Variable) {
+  constructor(readonly repo: RepoCoordinates, readonly scope: SecretScope, readonly variable: Variable) {
     super(variable.name, vscode.TreeItemCollapsibleState.None);
-    this.id = `variable:${scopeIdPart(scope)}:${variable.name}`;
+    this.id = `variable:${repo.owner}/${repo.repo}:${scopeIdPart(scope)}:${variable.name}`;
     this.description = formatVariablePreview(variable.value);
     this.iconPath = new vscode.ThemeIcon("symbol-string");
     this.tooltip = new vscode.MarkdownString(

@@ -9,6 +9,17 @@ export interface RepoCoordinates {
   readonly repo: string;
 }
 
+/** `"owner/repo"`. Used as the key for every per-repo data structure. */
+export type RepoKey = string;
+
+export function repoKey(coords: RepoCoordinates): RepoKey {
+  return `${coords.owner}/${coords.repo}`;
+}
+
+export function sameRepo(a: RepoCoordinates, b: RepoCoordinates): boolean {
+  return a.owner === b.owner && a.repo === b.repo;
+}
+
 export type RunStatus =
   | "queued"
   | "in_progress"

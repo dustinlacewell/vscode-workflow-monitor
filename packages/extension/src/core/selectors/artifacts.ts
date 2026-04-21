@@ -1,5 +1,5 @@
-import type { Artifact, WorkflowRun } from "../domain/types.js";
-import type { StoreSnapshot } from "../store/snapshot.js";
+import type { Artifact, RepoKey, WorkflowRun } from "../domain/types.js";
+import type { PerRepoState, StoreSnapshot } from "../store/snapshot.js";
 
 /**
  * View-model for the artifacts attached to a single run. Kind-tagged so the
@@ -12,47 +12,41 @@ export type RunArtifactsView =
   | { kind: "empty" } // fetch completed, no artifacts produced
   | { kind: "artifacts"; items: readonly Artifact[] };
 
-export function selectRunArtifacts(snap: StoreSnapshot, runId: number): RunArtifactsView {
-  const run = findRun(snap, runId);
+export function selectRunArtifacts(per: PerRepoState, runId: number): RunArtifactsView {
+  const run = findRun(per, runId);
   if (!run || run.status !== "completed") return { kind: "hidden" };
-  const items = snap.artifactsByRunId.get(runId);
+  const items = per.artifactsByRunId.get(runId);
   if (!items) return { kind: "loading" };
   if (items.length === 0) return { kind: "empty" };
   return { kind: "artifacts", items: sortArtifacts(items) };
 }
 
 /**
- * Every completed run that we haven't yet pulled artifact metadata for. Used
- * by the sync loop to decide which runs need a `listArtifacts` call without
- * re-fetching on every cycle.
- *
- * Non-completed runs are excluded — the artifacts endpoint returns an empty
- * list for in-flight runs anyway, and we want the "hidden" UI state to be
- * honest about the fact that we haven't asked yet.
+ * All completed runs in a single repo that haven't had their artifact
+ * metadata fetched yet. Used by LiveSync to decide which runs still need
+ * a `listArtifacts` call.
  */
-export function selectRunsMissingArtifacts(snap: StoreSnapshot): readonly number[] {
+export function selectRepoRunsMissingArtifacts(snap: StoreSnapshot, key: RepoKey): readonly number[] {
+  const per = snap.repos.get(key);
+  if (!per) return [];
   const missing: number[] = [];
-  for (const runs of snap.runsByWorkflowId.values()) {
+  for (const runs of per.runsByWorkflowId.values()) {
     for (const run of runs) {
       if (run.status !== "completed") continue;
-      if (!snap.artifactsByRunId.has(run.id)) missing.push(run.id);
+      if (!per.artifactsByRunId.has(run.id)) missing.push(run.id);
     }
   }
   return missing;
 }
 
-function findRun(snap: StoreSnapshot, runId: number): WorkflowRun | null {
-  for (const runs of snap.runsByWorkflowId.values()) {
+function findRun(per: PerRepoState, runId: number): WorkflowRun | null {
+  for (const runs of per.runsByWorkflowId.values()) {
     const hit = runs.find((r) => r.id === runId);
     if (hit) return hit;
   }
   return null;
 }
 
-/**
- * Stable sort for display: most recently created first, name as tie-breaker
- * so the order is deterministic across fetches.
- */
 function sortArtifacts(items: readonly Artifact[]): readonly Artifact[] {
   return [...items].sort((a, b) => {
     const ta = Date.parse(a.createdAt);
@@ -61,4 +55,3 @@ function sortArtifacts(items: readonly Artifact[]): readonly Artifact[] {
     return a.name.localeCompare(b.name);
   });
 }
-

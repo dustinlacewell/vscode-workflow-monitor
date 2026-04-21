@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import type { JobContext, RepoCoordinates, Step } from "../core/domain/types.js";
-import { isActiveStatus } from "../core/domain/types.js";
+import { isActiveStatus, repoKey } from "../core/domain/types.js";
 import type { LogService } from "../services/log-service.js";
 import type { WorkflowStore } from "../services/workflow-store.js";
 import type { Logger } from "../util/logger.js";
@@ -164,7 +164,7 @@ class LogPanel implements vscode.Disposable {
   }
 
   private syncCtx(): boolean {
-    const latest = this.store.resolveJob(this.ctx.run.id, this.ctx.job.id);
+    const latest = this.store.resolveJob(repoKey(this.repo), this.ctx.run.id, this.ctx.job.id);
     if (!latest) return false;
     const changed = latest.job.status !== this.ctx.job.status
       || latest.job.conclusion !== this.ctx.job.conclusion;

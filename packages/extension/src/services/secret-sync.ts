@@ -1,10 +1,12 @@
 import * as vscode from "vscode";
 import type { GitHubApi } from "../data/github-api.js";
 import { GitHubApiError } from "../data/github-api.js";
+import type { RepoContext } from "../data/git-repo.js";
 import { classifyAuthFailure } from "../core/auth/failure.js";
 import { encryptSecretValue, ensureSodiumReady } from "../core/auth/encrypt.js";
 import type { SecretScope } from "../core/domain/secrets.js";
-import type { RepoCoordinates } from "../core/domain/types.js";
+import type { RepoCoordinates, RepoKey } from "../core/domain/types.js";
+import { repoKey } from "../core/domain/types.js";
 import type { Logger } from "../util/logger.js";
 import { AuthService } from "./auth.js";
 import type { WorkflowStore } from "./workflow-store.js";
@@ -12,29 +14,22 @@ import type { WorkflowStore } from "./workflow-store.js";
 export type ApiProvider = () => GitHubApi | null;
 
 /**
- * Fetches repo/environment secrets.
+ * Fetches secrets + variables + environments for every tracked repo.
  *
- * No polling loop — secrets change rarely. But `refresh()` does fetch every
- * scope *eagerly in parallel*, so by the time the user navigates into an
- * environment the data is already cached. This is what keeps perceived
- * latency at ~1 round-trip instead of 1-per-click.
+ * Everything is on-demand (tree visibility, explicit refresh, post-write
+ * reloads) — secrets change rarely and polling them is wasteful. But each
+ * refresh eagerly fans out per-repo and per-env in parallel, so by the time
+ * the user drills into an environment its data is already cached.
  *
- * Triggers:
- *   - `setRepo()` fires `refresh()` automatically the first time a real repo
- *     resolves, so the data is ready by the time the user opens Settings.
- *   - tree visibility change re-fires `refresh()` (cheap thanks to ETag).
- *   - explicit `Refresh` title action.
- *   - `refreshEnvironment()` is still exposed for after-write reloads of a
- *     single scope (not used on first-expansion anymore).
- *
- * Failures feed the same AuthFailure banner as LiveSync, so "Missing scope"
- * diagnostics work for secrets too.
+ * Multi-repo: writes and refreshes take a `RepoKey` to scope the operation;
+ * the store keeps per-repo SecretsSnapshot entries so one repo's 403 doesn't
+ * blank the others.
  */
 export class SecretSync implements vscode.Disposable {
-  private repo: RepoCoordinates | null = null;
-  private abort: AbortController | null = null;
+  private repos: readonly RepoContext[] = [];
+  private readonly aborts = new Map<RepoKey, AbortController>();
+  private readonly inFlight = new Set<RepoKey>();
   private disposed = false;
-  private inFlight = false;
 
   constructor(
     private readonly apiProvider: ApiProvider,
@@ -42,136 +37,141 @@ export class SecretSync implements vscode.Disposable {
     private readonly log: Logger,
   ) {}
 
-  setRepo(repo: RepoCoordinates | null): void {
-    if (this.repo?.owner === repo?.owner && this.repo?.repo === repo?.repo) return;
-    this.repo = repo;
-    this.abort?.abort();
-    this.abort = null;
-    // Prefetch on repo resolution so the user isn't waiting when they open
-    // the Settings view. Subsequent repo changes also fire a refresh — stale
-    // data from a different repo would be worse than a brief loading state.
-    if (repo) void this.refresh();
+  setRepos(repos: readonly RepoContext[]): void {
+    const seenKeys = new Set(repos.map((r) => repoKey(r.coords)));
+    // Abort any in-flight fetches for repos that disappeared from the list.
+    for (const [key, ac] of this.aborts) {
+      if (!seenKeys.has(key)) {
+        ac.abort();
+        this.aborts.delete(key);
+      }
+    }
+    const prevKeys = new Set(this.repos.map((r) => repoKey(r.coords)));
+    this.repos = repos;
+    // Prefetch any newly-tracked repo, so the Settings view is ready before
+    // the user opens it.
+    for (const ctx of repos) {
+      if (!prevKeys.has(repoKey(ctx.coords))) void this.refreshRepo(ctx);
+    }
   }
 
-  /**
-   * Full fetch: repo secrets + env list + every env's secrets, all in parallel.
-   * For a typical repo (2-5 environments) that's 4-7 concurrent calls, all of
-   * which ETag-cache beyond the first time, so a second `refresh()` is nearly
-   * free.
-   */
+  /** Full refresh of every tracked repo in parallel. */
   async refresh(): Promise<void> {
-    if (this.disposed || this.inFlight) return;
-    const api = this.apiProvider();
-    const repo = this.repo;
-    if (!api || !repo) return;
+    if (this.disposed) return;
+    await Promise.all(this.repos.map((ctx) => this.refreshRepo(ctx)));
+  }
 
-    this.inFlight = true;
+  private async refreshRepo(ctx: RepoContext): Promise<void> {
+    if (this.disposed) return;
+    const key = repoKey(ctx.coords);
+    if (this.inFlight.has(key)) return;
+    const api = this.apiProvider();
+    if (!api) return;
+
+    this.inFlight.add(key);
     const ac = new AbortController();
-    this.abort?.abort();
-    this.abort = ac;
-    this.store.setSecretsStatus("loading");
+    this.aborts.get(key)?.abort();
+    this.aborts.set(key, ac);
+    this.store.setSecretsStatus(key, "loading");
 
     try {
       const [repoSecrets, repoVariables, environments] = await Promise.all([
-        api.listRepoSecrets(repo, ac.signal),
-        api.listRepoVariables(repo, ac.signal),
-        api.listEnvironments(repo, ac.signal),
+        api.listRepoSecrets(ctx.coords, ac.signal),
+        api.listRepoVariables(ctx.coords, ac.signal),
+        api.listEnvironments(ctx.coords, ac.signal),
       ]);
       if (ac.signal.aborted) return;
-      this.store.setEnvironments(environments);
-      this.store.setSecrets({ kind: "repo" }, repoSecrets);
-      this.store.setVariables({ kind: "repo" }, repoVariables);
+      this.store.setEnvironments(key, environments);
+      this.store.setSecrets(key, { kind: "repo" }, repoSecrets);
+      this.store.setVariables(key, { kind: "repo" }, repoVariables);
 
-      // Eager parallel fetch for every environment's secrets + variables.
-      // Each failure is isolated — one env 403 shouldn't blank the tree.
       await Promise.all(
         environments.flatMap((env) => [
-          this.fetchEnvSecrets(api, repo, env.name, ac.signal),
-          this.fetchEnvVariables(api, repo, env.name, ac.signal),
+          this.fetchEnvSecrets(api, ctx.coords, key, env.name, ac.signal),
+          this.fetchEnvVariables(api, ctx.coords, key, env.name, ac.signal),
         ]),
       );
     } catch (err) {
       if (isAbort(err)) return;
-      this.handleError(err);
+      this.handleError(key, err);
     } finally {
-      this.inFlight = false;
-      if (this.abort === ac) this.abort = null;
+      this.inFlight.delete(key);
+      if (this.aborts.get(key) === ac) this.aborts.delete(key);
     }
   }
 
   private async fetchEnvSecrets(
     api: GitHubApi,
-    repo: RepoCoordinates,
+    coords: RepoCoordinates,
+    key: RepoKey,
     envName: string,
     signal: AbortSignal,
   ): Promise<void> {
     try {
-      const secrets = await api.listEnvironmentSecrets(repo, envName, signal);
+      const secrets = await api.listEnvironmentSecrets(coords, envName, signal);
       if (signal.aborted) return;
-      this.store.setSecrets({ kind: "environment", name: envName }, secrets);
+      this.store.setSecrets(key, { kind: "environment", name: envName }, secrets);
     } catch (err) {
       if (isAbort(err)) return;
-      this.log.warn(`listEnvironmentSecrets(${envName}) failed`, err);
+      this.log.warn(`listEnvironmentSecrets(${key}/${envName}) failed`, err);
     }
   }
 
   private async fetchEnvVariables(
     api: GitHubApi,
-    repo: RepoCoordinates,
+    coords: RepoCoordinates,
+    key: RepoKey,
     envName: string,
     signal: AbortSignal,
   ): Promise<void> {
     try {
-      const variables = await api.listEnvironmentVariables(repo, envName, signal);
+      const variables = await api.listEnvironmentVariables(coords, envName, signal);
       if (signal.aborted) return;
-      this.store.setVariables({ kind: "environment", name: envName }, variables);
+      this.store.setVariables(key, { kind: "environment", name: envName }, variables);
     } catch (err) {
       if (isAbort(err)) return;
-      this.log.warn(`listEnvironmentVariables(${envName}) failed`, err);
+      this.log.warn(`listEnvironmentVariables(${key}/${envName}) failed`, err);
     }
   }
 
-  /**
-   * Create or update a secret in the given scope. Handles the public-key
-   * fetch, seal-box encryption, PUT, and targeted refetch.
-   *
-   * Throws on failure (the command handler surfaces the message) rather than
-   * quietly swallowing — upstream #513's silent-save bug was the opposite
-   * choice, and the fix is to be loud about the PUT response.
-   */
-  async writeSecret(scope: SecretScope, name: string, value: string): Promise<void> {
-    const { api, repo } = this.requireContext();
+  // --- write flows --------------------------------------------------------
+
+  async writeSecret(repo: RepoCoordinates, scope: SecretScope, name: string, value: string): Promise<void> {
+    const { api } = this.requireContext();
+    const key = repoKey(repo);
     await ensureSodiumReady();
-    const key = scope.kind === "repo"
+    const pubKey = scope.kind === "repo"
       ? await api.getRepoPublicKey(repo)
       : await api.getEnvironmentPublicKey(repo, scope.name);
-    const ciphertext = encryptSecretValue(key.key, value);
+    const ciphertext = encryptSecretValue(pubKey.key, value);
     if (scope.kind === "repo") {
-      await api.putRepoSecret(repo, name, ciphertext, key.keyId);
+      await api.putRepoSecret(repo, name, ciphertext, pubKey.keyId);
     } else {
-      await api.putEnvironmentSecret(repo, scope.name, name, ciphertext, key.keyId);
+      await api.putEnvironmentSecret(repo, scope.name, name, ciphertext, pubKey.keyId);
     }
-    await this.refreshScope(scope);
+    await this.refreshSecretScope(repo, key, scope);
   }
 
-  /** Delete a secret in the given scope. Refreshes the affected scope on success. */
-  async deleteSecret(scope: SecretScope, name: string): Promise<void> {
-    const { api, repo } = this.requireContext();
+  async deleteSecret(repo: RepoCoordinates, scope: SecretScope, name: string): Promise<void> {
+    const { api } = this.requireContext();
+    const key = repoKey(repo);
     if (scope.kind === "repo") {
       await api.deleteRepoSecret(repo, name);
     } else {
       await api.deleteEnvironmentSecret(repo, scope.name, name);
     }
-    await this.refreshScope(scope);
+    await this.refreshSecretScope(repo, key, scope);
   }
 
-  /**
-   * Create or update a variable. GitHub distinguishes create (POST) from
-   * update (PATCH), so we pick the right call based on whether the name
-   * is already known in the snapshot.
-   */
-  async writeVariable(scope: SecretScope, name: string, value: string, exists: boolean): Promise<void> {
-    const { api, repo } = this.requireContext();
+  async writeVariable(
+    repo: RepoCoordinates,
+    scope: SecretScope,
+    name: string,
+    value: string,
+    exists: boolean,
+  ): Promise<void> {
+    const { api } = this.requireContext();
+    const key = repoKey(repo);
     const normalized = value.replace(/\r\n/g, "\n");
     if (scope.kind === "repo") {
       if (exists) await api.updateRepoVariable(repo, name, normalized);
@@ -180,68 +180,71 @@ export class SecretSync implements vscode.Disposable {
       if (exists) await api.updateEnvironmentVariable(repo, scope.name, name, normalized);
       else await api.createEnvironmentVariable(repo, scope.name, name, normalized);
     }
-    await this.refreshVariableScope(scope);
+    await this.refreshVariableScope(repo, key, scope);
   }
 
-  async deleteVariable(scope: SecretScope, name: string): Promise<void> {
-    const { api, repo } = this.requireContext();
+  async deleteVariable(repo: RepoCoordinates, scope: SecretScope, name: string): Promise<void> {
+    const { api } = this.requireContext();
+    const key = repoKey(repo);
     if (scope.kind === "repo") {
       await api.deleteRepoVariable(repo, name);
     } else {
       await api.deleteEnvironmentVariable(repo, scope.name, name);
     }
-    await this.refreshVariableScope(scope);
+    await this.refreshVariableScope(repo, key, scope);
   }
 
-  private async refreshVariableScope(scope: SecretScope): Promise<void> {
-    const { api, repo } = this.requireContext();
+  private async refreshSecretScope(repo: RepoCoordinates, key: RepoKey, scope: SecretScope): Promise<void> {
+    const { api } = this.requireContext();
     if (scope.kind === "repo") {
-      const variables = await api.listRepoVariables(repo);
-      this.store.setVariables({ kind: "repo" }, variables);
+      this.store.setSecrets(key, { kind: "repo" }, await api.listRepoSecrets(repo));
       return;
     }
-    const variables = await api.listEnvironmentVariables(repo, scope.name);
-    this.store.setVariables({ kind: "environment", name: scope.name }, variables);
+    this.store.setSecrets(
+      key,
+      { kind: "environment", name: scope.name },
+      await api.listEnvironmentSecrets(repo, scope.name),
+    );
   }
 
-  private async refreshScope(scope: SecretScope): Promise<void> {
-    const { api, repo } = this.requireContext();
+  private async refreshVariableScope(repo: RepoCoordinates, key: RepoKey, scope: SecretScope): Promise<void> {
+    const { api } = this.requireContext();
     if (scope.kind === "repo") {
-      const secrets = await api.listRepoSecrets(repo);
-      this.store.setSecrets({ kind: "repo" }, secrets);
+      this.store.setVariables(key, { kind: "repo" }, await api.listRepoVariables(repo));
       return;
     }
-    const secrets = await api.listEnvironmentSecrets(repo, scope.name);
-    this.store.setSecrets({ kind: "environment", name: scope.name }, secrets);
+    this.store.setVariables(
+      key,
+      { kind: "environment", name: scope.name },
+      await api.listEnvironmentVariables(repo, scope.name),
+    );
   }
 
-  private requireContext(): { api: GitHubApi; repo: RepoCoordinates } {
-    const api = this.apiProvider();
-    const repo = this.repo;
-    if (!api) throw new Error("Not signed in to GitHub");
-    if (!repo) throw new Error("No GitHub repository detected in this workspace");
-    return { api, repo };
-  }
-
-  /** Targeted reload for a single environment — used by post-write flows. */
-  async refreshEnvironment(envName: string): Promise<void> {
+  /** Targeted reload for a single env's secrets — used as a lazy-load fallback. */
+  async refreshEnvironment(repo: RepoCoordinates, envName: string): Promise<void> {
     if (this.disposed) return;
     const api = this.apiProvider();
-    const repo = this.repo;
-    if (!api || !repo) return;
+    if (!api) return;
+    const key = repoKey(repo);
     try {
       const secrets = await api.listEnvironmentSecrets(repo, envName);
-      this.store.setSecrets({ kind: "environment", name: envName }, secrets);
+      this.store.setSecrets(key, { kind: "environment", name: envName }, secrets);
     } catch (err) {
       if (isAbort(err)) return;
-      this.handleError(err);
+      this.handleError(key, err);
     }
   }
 
-  private handleError(err: unknown): void {
+  private requireContext(): { api: GitHubApi } {
+    const api = this.apiProvider();
+    if (!api) throw new Error("Not signed in to GitHub");
+    return { api };
+  }
+
+  private handleError(key: RepoKey, err: unknown): void {
     const message = err instanceof Error ? err.message : String(err);
-    this.log.warn("Secret sync failed", err);
-    this.store.setSecretsStatus("error", message);
+    this.log.warn(`Secret sync for ${key} failed`, err);
+    this.store.setSecretsStatus(key, "error", message);
     if (err instanceof GitHubApiError) {
       this.store.setAuthFailure(classifyAuthFailure({
         status: err.status ?? null,
@@ -256,8 +259,8 @@ export class SecretSync implements vscode.Disposable {
 
   dispose(): void {
     this.disposed = true;
-    this.abort?.abort();
-    this.abort = null;
+    for (const ac of this.aborts.values()) ac.abort();
+    this.aborts.clear();
   }
 }
 

@@ -4,13 +4,11 @@ import { makeEnvironment, makeSecret, makeSecretsSnapshot, makeSnapshot, makeVar
 
 describe("selectSettingsView", () => {
   it("idle when the store hasn't started", () => {
-    const snap = { ...makeSnapshot({ status: "idle" }), repo: null };
-    expect(selectSettingsView(snap)).toEqual({ kind: "idle" });
+    expect(selectSettingsView(makeSnapshot({ status: "idle" }))).toEqual({ kind: "idle" });
   });
 
   it("no-repo when there is no active repository", () => {
-    const snap = { ...makeSnapshot({ status: "no-repo" }), repo: null };
-    expect(selectSettingsView(snap)).toEqual({ kind: "no-repo" });
+    expect(selectSettingsView(makeSnapshot({ status: "no-repo" }))).toEqual({ kind: "no-repo" });
   });
 
   it("repo view exposes repo-scoped secrets directly, not inside a scope group", () => {

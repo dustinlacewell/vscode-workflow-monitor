@@ -48,7 +48,7 @@ export class StatusBar implements vscode.Disposable {
       case "idle":
         this.stopPulse();
         this.item.text = "$(github-action) Actions";
-        this.item.tooltip = `${view.repo.owner}/${view.repo.repo} · no runs yet`;
+        this.item.tooltip = "No runs yet";
         this.item.backgroundColor = undefined;
         this.item.show();
         return;

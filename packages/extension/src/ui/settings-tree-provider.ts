@@ -8,6 +8,8 @@ import type {
 } from "../core/selectors/settings.js";
 import { selectSettingsView } from "../core/selectors/settings.js";
 import type { Secret, Variable } from "../core/domain/secrets.js";
+import type { RepoCoordinates } from "../core/domain/types.js";
+import { repoKey, sameRepo } from "../core/domain/types.js";
 import type { SecretSync } from "../services/secret-sync.js";
 import type { WorkflowStore } from "../services/workflow-store.js";
 import {
@@ -25,19 +27,20 @@ import {
  * Settings tree:
  *
  *   Settings
- *   └── owner/repo
- *       ├── Secrets            (repo scope)
- *       │   └── API_TOKEN
- *       ├── Variables          (repo scope — placeholder)
- *       └── Environments
- *           └── production (2 protection rules)
- *               ├── Secrets
- *               │   └── DEPLOY_KEY
- *               └── Variables
+ *   ├── owner/backend
+ *   │   ├── Secrets
+ *   │   ├── Variables
+ *   │   └── Environments
+ *   │       └── production
+ *   │           ├── Secrets
+ *   │           └── Variables
+ *   └── owner/frontend
+ *       └── …
  *
- * Env-scoped secrets load lazily: the per-env `Secrets` subsection only fires
- * a fetch when expanded, so entering a repo with 10 environments doesn't
- * produce 10 eager API calls up-front.
+ * Multi-repo: every tracked repo appears as its own SettingsRepoNode at root.
+ * Single-repo still renders a single SettingsRepoNode expanded-by-default.
+ * Lazy per-env fetch stays in place — expanding a per-env Secrets subsection
+ * triggers that one env's fetch if the eager pre-fetch didn't already cover it.
  */
 export class SettingsTreeProvider implements vscode.TreeDataProvider<TreeNode>, vscode.Disposable {
   private readonly emitter = new vscode.EventEmitter<TreeNode | undefined>();
@@ -62,12 +65,22 @@ export class SettingsTreeProvider implements vscode.TreeDataProvider<TreeNode>, 
   getChildren(element?: TreeNode): TreeNode[] {
     const view = selectSettingsView(this.store.snapshot());
     if (!element) return renderRoot(view);
-    const repoView = firstRepo(view);
-    if (!repoView) return [];
-    if (element instanceof SettingsRepoNode) return renderRepoChildren(repoView);
-    if (element instanceof SettingsSectionNode) return renderRepoSection(element, repoView);
-    if (element instanceof EnvironmentNode) return renderEnvChildren(element, repoView);
-    if (element instanceof EnvironmentSubsectionNode) return this.renderEnvSubsection(element, repoView);
+    if (element instanceof SettingsRepoNode) {
+      const repoView = findRepo(view, element.repo);
+      return repoView ? renderRepoChildren(repoView) : [];
+    }
+    if (element instanceof SettingsSectionNode) {
+      const repoView = findRepo(view, element.repo);
+      return repoView ? renderRepoSection(element, repoView) : [];
+    }
+    if (element instanceof EnvironmentNode) {
+      const repoView = findRepo(view, element.repo);
+      return repoView ? renderEnvChildren(element, repoView) : [];
+    }
+    if (element instanceof EnvironmentSubsectionNode) {
+      const repoView = findRepo(view, element.repo);
+      return repoView ? this.renderEnvSubsection(element, repoView) : [];
+    }
     return [];
   }
 
@@ -86,13 +99,13 @@ export class SettingsTreeProvider implements vscode.TreeDataProvider<TreeNode>, 
     envView: EnvironmentView,
   ): TreeNode[] {
     if (envView.secrets.kind === "loading") {
-      this.ensureEnvFetch(node.environment.name);
+      this.ensureEnvFetch(node.repo, node.environment.name);
       return [new MessageNode("Loading secrets…", "sync~spin")];
     }
     if (envView.secrets.items.length === 0) {
       return [new MessageNode("No secrets in this environment", "info")];
     }
-    return envView.secrets.items.map((s) => new SecretNode({ kind: "environment", name: envView.environment.name }, s));
+    return envView.secrets.items.map((s) => new SecretNode(node.repo, { kind: "environment", name: envView.environment.name }, s));
   }
 
   private renderEnvVariables(
@@ -100,19 +113,20 @@ export class SettingsTreeProvider implements vscode.TreeDataProvider<TreeNode>, 
     envView: EnvironmentView,
   ): TreeNode[] {
     if (envView.variables.kind === "loading") {
-      this.ensureEnvFetch(node.environment.name);
+      this.ensureEnvFetch(node.repo, node.environment.name);
       return [new MessageNode("Loading variables…", "sync~spin")];
     }
     if (envView.variables.items.length === 0) {
       return [new MessageNode("No variables in this environment", "info")];
     }
-    return envView.variables.items.map((v) => new VariableNode({ kind: "environment", name: envView.environment.name }, v));
+    return envView.variables.items.map((v) => new VariableNode(node.repo, { kind: "environment", name: envView.environment.name }, v));
   }
 
-  private ensureEnvFetch(envName: string): void {
-    if (this.requestedEnvScopes.has(envName)) return;
-    this.requestedEnvScopes.add(envName);
-    void this.sync.refreshEnvironment(envName);
+  private ensureEnvFetch(repo: RepoCoordinates, envName: string): void {
+    const key = `${repoKey(repo)}:${envName}`;
+    if (this.requestedEnvScopes.has(key)) return;
+    this.requestedEnvScopes.add(key);
+    void this.sync.refreshEnvironment(repo, envName);
   }
 
   dispose(): void {
@@ -134,8 +148,9 @@ function renderRoot(view: SettingsView): TreeNode[] {
   }
 }
 
-function firstRepo(view: SettingsView): SettingsRepoView | null {
-  return view.kind === "repos" ? view.repos[0] ?? null : null;
+function findRepo(view: SettingsView, repo: RepoCoordinates): SettingsRepoView | null {
+  if (view.kind !== "repos") return null;
+  return view.repos.find((r) => sameRepo(r.repo, repo)) ?? null;
 }
 
 function findEnv(repoView: SettingsRepoView, name: string): EnvironmentView | null {
@@ -145,21 +160,22 @@ function findEnv(repoView: SettingsRepoView, name: string): EnvironmentView | nu
 
 function renderRepoChildren(repoView: SettingsRepoView): TreeNode[] {
   return [
-    new SettingsSectionNode("secrets", scopeCount(repoView.repoSecrets)),
-    new SettingsSectionNode("variables", scopeCount(repoView.repoVariables)),
-    new SettingsSectionNode("environments", envSectionCount(repoView.environments)),
+    new SettingsSectionNode(repoView.repo, "secrets", scopeCount(repoView.repoSecrets)),
+    new SettingsSectionNode(repoView.repo, "variables", scopeCount(repoView.repoVariables)),
+    new SettingsSectionNode(repoView.repo, "environments", envSectionCount(repoView.environments)),
   ];
 }
 
 function renderRepoSection(node: SettingsSectionNode, repoView: SettingsRepoView): TreeNode[] {
   switch (node.section) {
-    case "secrets":      return renderRepoSecrets(repoView.repoSecrets);
-    case "variables":    return renderRepoVariables(repoView.repoVariables);
-    case "environments": return renderEnvironments(repoView.environments);
+    case "secrets":      return renderRepoSecrets(node.repo, repoView.repoSecrets);
+    case "variables":    return renderRepoVariables(node.repo, repoView.repoVariables);
+    case "environments": return renderEnvironments(node.repo, repoView.environments);
   }
 }
 
 function renderRepoSecrets(
+  repo: RepoCoordinates,
   view: ScopeListView<Secret> | { kind: "error"; errorMessage: string },
 ): TreeNode[] {
   switch (view.kind) {
@@ -169,11 +185,12 @@ function renderRepoSecrets(
       return [new MessageNode(`Error: ${view.errorMessage}`, "error")];
     case "items":
       if (view.items.length === 0) return [new MessageNode("No repository secrets", "info")];
-      return view.items.map((s) => new SecretNode({ kind: "repo" }, s));
+      return view.items.map((s) => new SecretNode(repo, { kind: "repo" }, s));
   }
 }
 
 function renderRepoVariables(
+  repo: RepoCoordinates,
   view: ScopeListView<Variable> | { kind: "error"; errorMessage: string },
 ): TreeNode[] {
   switch (view.kind) {
@@ -183,11 +200,11 @@ function renderRepoVariables(
       return [new MessageNode(`Error: ${view.errorMessage}`, "error")];
     case "items":
       if (view.items.length === 0) return [new MessageNode("No repository variables", "info")];
-      return view.items.map((v) => new VariableNode({ kind: "repo" }, v));
+      return view.items.map((v) => new VariableNode(repo, { kind: "repo" }, v));
   }
 }
 
-function renderEnvironments(view: SectionListView<EnvironmentView>): TreeNode[] {
+function renderEnvironments(repo: RepoCoordinates, view: SectionListView<EnvironmentView>): TreeNode[] {
   switch (view.kind) {
     case "loading":
       return [new MessageNode("Loading environments…", "sync~spin")];
@@ -195,7 +212,7 @@ function renderEnvironments(view: SectionListView<EnvironmentView>): TreeNode[] 
       return [new MessageNode(`Error: ${view.errorMessage}`, "error")];
     case "items":
       if (view.items.length === 0) return [new MessageNode("No environments configured", "info")];
-      return view.items.map((e) => new EnvironmentNode(e.environment));
+      return view.items.map((e) => new EnvironmentNode(repo, e.environment));
   }
 }
 
@@ -203,8 +220,8 @@ function renderEnvChildren(node: EnvironmentNode, repoView: SettingsRepoView): T
   const envView = findEnv(repoView, node.environment.name);
   if (!envView) return [];
   return [
-    new EnvironmentSubsectionNode(node.environment, "secrets", scopeCount(envView.secrets)),
-    new EnvironmentSubsectionNode(node.environment, "variables", scopeCount(envView.variables)),
+    new EnvironmentSubsectionNode(node.repo, node.environment, "secrets", scopeCount(envView.secrets)),
+    new EnvironmentSubsectionNode(node.repo, node.environment, "variables", scopeCount(envView.variables)),
   ];
 }
 
