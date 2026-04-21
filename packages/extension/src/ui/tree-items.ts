@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
-import type { Job, RunConclusion, RunStatus, Step, Workflow, WorkflowRun } from "../core/domain/types.js";
+import type { Artifact, Job, RunConclusion, RunStatus, Step, Workflow, WorkflowRun } from "../core/domain/types.js";
 import { hasFailed } from "../core/domain/types.js";
 import { durationBetween, formatDuration, formatRelative } from "../util/format.js";
+import { humanBytes } from "../services/artifact-service.js";
 
 /**
  * Context values carry a failure suffix (`-failed`) when the item is in a
@@ -17,7 +18,9 @@ export type TreeNode =
   | WorkflowNode
   | RunNode
   | JobNode
-  | StepNode;
+  | StepNode
+  | ArtifactsGroupNode
+  | ArtifactNode;
 
 export class MessageNode extends vscode.TreeItem {
   readonly kind = "message" as const;
@@ -81,6 +84,58 @@ export class JobNode extends vscode.TreeItem {
     this.contextValue = `job${failSuffix(job)}`;
     this.command = { command: "workflowMonitor.viewJobLog", title: "View Job Log", arguments: [this] };
   }
+}
+
+export class ArtifactsGroupNode extends vscode.TreeItem {
+  readonly kind = "artifacts-group" as const;
+  constructor(readonly run: WorkflowRun, readonly artifacts: readonly Artifact[] | null) {
+    // null => loading; empty array is filtered out upstream (we never show it)
+    const count = artifacts?.length ?? 0;
+    super(
+      "Artifacts",
+      count > 0 ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
+    );
+    this.id = `artifacts:${run.id}`;
+    this.description = artifacts === null ? "loading…" : `${count}`;
+    this.iconPath = new vscode.ThemeIcon("archive");
+    this.tooltip = artifacts === null
+      ? `Fetching artifacts for #${run.runNumber}…`
+      : `${count} artifact${count === 1 ? "" : "s"} from run #${run.runNumber}`;
+    this.contextValue = "artifacts-group";
+  }
+}
+
+export class ArtifactNode extends vscode.TreeItem {
+  readonly kind = "artifact" as const;
+  constructor(readonly run: WorkflowRun, readonly artifact: Artifact) {
+    super(artifact.name, vscode.TreeItemCollapsibleState.None);
+    this.id = `artifact:${artifact.id}`;
+    const parts = [humanBytes(artifact.sizeBytes)];
+    if (artifact.expired) parts.push("expired");
+    this.description = parts.join(" · ");
+    this.iconPath = new vscode.ThemeIcon(artifact.expired ? "archive" : "package");
+    this.tooltip = buildArtifactTooltip(run, artifact);
+    this.contextValue = artifact.expired ? "artifact-expired" : "artifact";
+    // Double-click / enter triggers the download directly.
+    if (!artifact.expired) {
+      this.command = {
+        command: "workflowMonitor.downloadArtifact",
+        title: "Download artifact",
+        arguments: [this],
+      };
+    }
+  }
+}
+
+function buildArtifactTooltip(run: WorkflowRun, artifact: Artifact): vscode.MarkdownString {
+  const md = new vscode.MarkdownString();
+  md.appendMarkdown(`**${artifact.name}**\n\n`);
+  md.appendMarkdown(`- size: ${humanBytes(artifact.sizeBytes)}\n`);
+  md.appendMarkdown(`- run: \`#${run.runNumber}\`\n`);
+  md.appendMarkdown(`- created: ${formatRelative(artifact.createdAt)}\n`);
+  if (artifact.expiresAt) md.appendMarkdown(`- expires: ${formatRelative(artifact.expiresAt)}\n`);
+  if (artifact.expired) md.appendMarkdown(`- **expired** — download unavailable\n`);
+  return md;
 }
 
 export class StepNode extends vscode.TreeItem {

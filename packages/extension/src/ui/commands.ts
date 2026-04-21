@@ -15,7 +15,7 @@ import type { LiveSync } from "../services/live-sync.js";
 import type { Logger } from "../util/logger.js";
 import type { LogWebviewService } from "./log-webview-panel.js";
 import { promptDispatchInputs } from "./prompts.js";
-import { JobNode, RunNode, StepNode, WorkflowNode } from "./tree-items.js";
+import { ArtifactNode, JobNode, RunNode, StepNode, WorkflowNode } from "./tree-items.js";
 
 type Handler = (...args: unknown[]) => unknown | Promise<unknown>;
 
@@ -202,7 +202,11 @@ function artifactCommands(deps: CommandDeps): CommandDef[] {
     {
       id: "workflowMonitor.showArtifacts",
       handler: (node: unknown) => guardRun(deps, node, async (api, repo, run) => {
-        const artifacts = await api.listArtifacts(repo, run.id);
+        // Prefer the cached list — avoids a round-trip and surfaces the same
+        // set the tree is showing — but fall back to a fresh fetch if the
+        // sync loop hasn't populated the store yet.
+        const cached = deps.store.snapshot().artifactsByRunId.get(run.id);
+        const artifacts = cached ?? await api.listArtifacts(repo, run.id);
         if (artifacts.length === 0) { vscode.window.showInformationMessage(`Run #${run.runNumber} has no artifacts.`); return; }
         interface ArtifactPick extends vscode.QuickPickItem { artifact: import("../core/domain/types.js").Artifact }
         const items: ArtifactPick[] = artifacts.map((a) => ({
@@ -218,6 +222,19 @@ function artifactCommands(deps: CommandDeps): CommandDef[] {
         if (!pick) return;
         await deps.artifacts.saveToDisk(repo, pick.artifact);
       }),
+    },
+    {
+      id: "workflowMonitor.downloadArtifact",
+      handler: async (node: unknown) => {
+        if (!(node instanceof ArtifactNode)) return;
+        const repo = deps.store.snapshot().repo;
+        if (!repo) { vscode.window.showWarningMessage("Sign in to GitHub first."); return; }
+        try {
+          await deps.artifacts.saveToDisk(repo, node.artifact);
+        } catch (err) {
+          vscode.window.showErrorMessage(errMsg(err));
+        }
+      },
     },
   ];
 }

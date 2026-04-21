@@ -1,5 +1,5 @@
 import type { AuthFailure } from "../auth/failure.js";
-import type { Job, RepoCoordinates, Workflow, WorkflowRun } from "../domain/types.js";
+import type { Artifact, Job, RepoCoordinates, Workflow, WorkflowRun } from "../domain/types.js";
 
 export type StoreStatus = "idle" | "loading" | "ready" | "error" | "unauthenticated" | "no-repo";
 
@@ -16,6 +16,13 @@ export interface StoreSnapshot {
   readonly workflows: readonly Workflow[];
   readonly runsByWorkflowId: ReadonlyMap<number, readonly WorkflowRun[]>;
   readonly jobsByRunId: ReadonlyMap<number, readonly Job[]>;
+  /**
+   * Artifacts fetched for a given run. Absence (no entry) means "not yet
+   * fetched" — distinct from an empty array which means "fetched, none
+   * exist". The selector layer uses that distinction to render a loading
+   * state vs. an empty state.
+   */
+  readonly artifactsByRunId: ReadonlyMap<number, readonly Artifact[]>;
   readonly errorMessage: string | null;
   /**
    * Structured detail about the last auth-related or API failure — the thing

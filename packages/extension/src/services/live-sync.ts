@@ -4,6 +4,7 @@ import { GitHubApiError } from "../data/github-api.js";
 import { classifyAuthFailure, type AuthFailure } from "../core/auth/failure.js";
 import type { RepoCoordinates } from "../core/domain/types.js";
 import { isActiveStatus } from "../core/domain/types.js";
+import { selectRunsMissingArtifacts } from "../core/selectors/artifacts.js";
 import type { Logger } from "../util/logger.js";
 import { AuthService } from "./auth.js";
 import type { WorkflowStore } from "./workflow-store.js";
@@ -160,6 +161,23 @@ export class LiveSync implements vscode.Disposable {
         }
       }
       this.store.pruneJobs(allRunIds);
+      this.store.pruneArtifacts(allRunIds);
+
+      // Completed runs: fetch artifact metadata once each. We don't refetch
+      // unless the run id drops and re-appears — artifact lists are effectively
+      // immutable post-completion (the server only adds an expired flag over
+      // time), and polling them is wasteful.
+      for (const runId of selectRunsMissingArtifacts(this.store.snapshot())) {
+        if (ac.signal.aborted) return;
+        try {
+          const artifacts = await client.listArtifacts(repo, runId, ac.signal);
+          if (ac.signal.aborted) return;
+          this.store.setArtifacts(runId, artifacts);
+        } catch (err) {
+          if (isAbort(err)) return;
+          this.log.warn(`listArtifacts(${runId}) failed; skipping`, err);
+        }
+      }
     } catch (err) {
       if (isAbort(err)) return;
       this.handleError(err);

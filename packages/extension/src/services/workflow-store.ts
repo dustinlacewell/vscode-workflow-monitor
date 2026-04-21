@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import type { AuthFailure } from "../core/auth/failure.js";
-import type { Job, JobContext, RepoCoordinates, Workflow, WorkflowRun } from "../core/domain/types.js";
+import type { Artifact, Job, JobContext, RepoCoordinates, Workflow, WorkflowRun } from "../core/domain/types.js";
 import { isActiveStatus } from "../core/domain/types.js";
 import type { StoreSnapshot, StoreStatus } from "../core/store/snapshot.js";
 
@@ -21,6 +21,7 @@ export class WorkflowStore implements vscode.Disposable {
     workflows: [],
     runsByWorkflowId: new Map(),
     jobsByRunId: new Map(),
+    artifactsByRunId: new Map(),
     errorMessage: null,
     authFailure: null,
     lastUpdated: null,
@@ -82,6 +83,7 @@ export class WorkflowStore implements vscode.Disposable {
       workflows: [],
       runsByWorkflowId: new Map(),
       jobsByRunId: new Map(),
+      artifactsByRunId: new Map(),
       status: repo ? "loading" : "no-repo",
       errorMessage: null,
       authFailure: null,
@@ -104,6 +106,12 @@ export class WorkflowStore implements vscode.Disposable {
     this.update({ jobsByRunId: next, lastUpdated: new Date() });
   }
 
+  setArtifacts(runId: number, artifacts: readonly Artifact[]): void {
+    const next = new Map(this.snap.artifactsByRunId);
+    next.set(runId, artifacts);
+    this.update({ artifactsByRunId: next, lastUpdated: new Date() });
+  }
+
   pruneJobs(liveRunIds: ReadonlySet<number>): void {
     let changed = false;
     const next = new Map(this.snap.jobsByRunId);
@@ -111,6 +119,15 @@ export class WorkflowStore implements vscode.Disposable {
       if (!liveRunIds.has(id)) { next.delete(id); changed = true; }
     }
     if (changed) this.update({ jobsByRunId: next });
+  }
+
+  pruneArtifacts(liveRunIds: ReadonlySet<number>): void {
+    let changed = false;
+    const next = new Map(this.snap.artifactsByRunId);
+    for (const id of next.keys()) {
+      if (!liveRunIds.has(id)) { next.delete(id); changed = true; }
+    }
+    if (changed) this.update({ artifactsByRunId: next });
   }
 
   private update(patch: Partial<StoreSnapshot>): void {

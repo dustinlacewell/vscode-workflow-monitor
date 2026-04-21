@@ -151,6 +151,12 @@
         "icon": "$(archive)"
       },
       {
+        "command": "workflowMonitor.downloadArtifact",
+        "title": "Download Artifact",
+        "category": "Workflow Monitor",
+        "icon": "$(cloud-download)"
+      },
+      {
         "command": "workflowMonitor.clearDiagnostics",
         "title": "Clear GitHub Actions Diagnostics",
         "category": "Workflow Monitor"
@@ -216,6 +222,16 @@
           "group": "1_actions@4"
         },
         {
+          "command": "workflowMonitor.downloadArtifact",
+          "when": "view == workflowMonitor.workflows && viewItem == artifact",
+          "group": "inline@1"
+        },
+        {
+          "command": "workflowMonitor.downloadArtifact",
+          "when": "view == workflowMonitor.workflows && viewItem == artifact",
+          "group": "1_actions@1"
+        },
+        {
           "command": "workflowMonitor.copyFailureContext",
           "when": "view == workflowMonitor.workflows && viewItem =~ /^(workflow|run)-failed$/",
           "group": "1_actions@5"
@@ -243,6 +259,10 @@
         },
         {
           "command": "workflowMonitor.copyFailureContextForJob",
+          "when": "false"
+        },
+        {
+          "command": "workflowMonitor.downloadArtifact",
           "when": "false"
         }
       ]

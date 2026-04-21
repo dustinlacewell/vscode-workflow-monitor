@@ -3,10 +3,14 @@ import type { WorkflowStore } from "../services/workflow-store.js";
 import type { ViewStateService } from "../services/view-state.js";
 import type { AuthFailure } from "../core/auth/failure.js";
 import { missingScopes, summariseAuthFailure } from "../core/auth/failure.js";
+import { selectRunArtifacts } from "../core/selectors/artifacts.js";
 import type { BranchBanner, RootView } from "../core/selectors/root-view.js";
 import { selectRootView } from "../core/selectors/root-view.js";
 import { selectRunJobs, selectWorkflowRuns, type WorkflowRow } from "../core/selectors/runs.js";
+import type { WorkflowRun } from "../core/domain/types.js";
 import {
+  ArtifactNode,
+  ArtifactsGroupNode,
   JobNode,
   MessageNode,
   RunNode,
@@ -49,9 +53,16 @@ export class WorkflowsTreeProvider implements vscode.TreeDataProvider<TreeNode>,
       return renderWorkflowRuns(view);
     }
     if (element instanceof RunNode) {
-      return renderRunJobs(selectRunJobs(snap, element.run.id));
+      return renderRunChildren(
+        element.run,
+        selectRunJobs(snap, element.run.id),
+        selectRunArtifacts(snap, element.run.id),
+      );
     }
     if (element instanceof JobNode) return element.job.steps.map((s) => new StepNode(s, element.job));
+    if (element instanceof ArtifactsGroupNode) {
+      return element.artifacts?.map((a) => new ArtifactNode(element.run, a)) ?? [];
+    }
     return [];
   }
 
@@ -174,6 +185,17 @@ function renderWorkflowRuns(view: ReturnType<typeof selectWorkflowRuns>): TreeNo
   }
 }
 
+function renderRunChildren(
+  run: WorkflowRun,
+  jobs: ReturnType<typeof selectRunJobs>,
+  artifacts: ReturnType<typeof selectRunArtifacts>,
+): TreeNode[] {
+  const nodes = renderRunJobs(jobs);
+  const group = renderArtifactsGroup(run, artifacts);
+  if (group) nodes.push(group);
+  return nodes;
+}
+
 function renderRunJobs(view: ReturnType<typeof selectRunJobs>): TreeNode[] {
   switch (view.kind) {
     case "loading":
@@ -182,5 +204,26 @@ function renderRunJobs(view: ReturnType<typeof selectRunJobs>): TreeNode[] {
       return [new MessageNode("No jobs reported yet", "info")];
     case "jobs":
       return view.jobs.map((j) => new JobNode(j));
+  }
+}
+
+/**
+ * The artifacts row only appears when there's something worth showing.
+ * "hidden" (run still in flight) and "empty" (run completed, nothing produced)
+ * both suppress the node — otherwise every job list would grow a noisy
+ * "Artifacts: 0" row.
+ */
+function renderArtifactsGroup(
+  run: WorkflowRun,
+  view: ReturnType<typeof selectRunArtifacts>,
+): ArtifactsGroupNode | null {
+  switch (view.kind) {
+    case "hidden":
+    case "empty":
+      return null;
+    case "loading":
+      return new ArtifactsGroupNode(run, null);
+    case "artifacts":
+      return new ArtifactsGroupNode(run, view.items);
   }
 }
