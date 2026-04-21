@@ -2,7 +2,6 @@ import * as vscode from "vscode";
 import type { Environment, Secret, SecretScope } from "../core/domain/secrets.js";
 import type { Artifact, Job, RepoCoordinates, RunConclusion, RunStatus, Step, Workflow, WorkflowRun } from "../core/domain/types.js";
 import { hasFailed } from "../core/domain/types.js";
-import type { SecretGroup } from "../core/selectors/secrets.js";
 import { durationBetween, formatDuration, formatRelative } from "../util/format.js";
 import { humanBytes } from "../services/artifact-service.js";
 
@@ -26,7 +25,7 @@ export type TreeNode =
   | SettingsRepoNode
   | SettingsSectionNode
   | EnvironmentNode
-  | SecretScopeGroupNode
+  | EnvironmentSubsectionNode
   | SecretNode;
 
 export class MessageNode extends vscode.TreeItem {
@@ -208,17 +207,19 @@ const SECTION_ICON: Record<SettingsSectionKind, string> = {
   variables: "symbol-string",
 };
 
+/**
+ * Environment row under Settings. Collapsible — its children are the
+ * env-scoped Secrets and Variables sub-sections. Metadata (protection rules,
+ * timestamps) lives in the tooltip + description to keep the label clean.
+ */
 export class EnvironmentNode extends vscode.TreeItem {
   readonly kind = "environment" as const;
   constructor(readonly environment: Environment) {
-    super(environment.name, vscode.TreeItemCollapsibleState.None);
+    super(environment.name, vscode.TreeItemCollapsibleState.Collapsed);
     this.id = `environment:${environment.name}`;
-    const parts: string[] = [];
     if (environment.protectionRuleCount > 0) {
-      parts.push(`${environment.protectionRuleCount} protection rule${environment.protectionRuleCount === 1 ? "" : "s"}`);
+      this.description = `${environment.protectionRuleCount} protection rule${environment.protectionRuleCount === 1 ? "" : "s"}`;
     }
-    parts.push(`updated ${formatRelative(environment.updatedAt)}`);
-    this.description = parts.join(" · ");
     this.iconPath = new vscode.ThemeIcon("rocket");
     this.tooltip = new vscode.MarkdownString(
       `**${environment.name}**\n\n`
@@ -230,30 +231,28 @@ export class EnvironmentNode extends vscode.TreeItem {
   }
 }
 
-// --- secrets ---------------------------------------------------------------
-
 /**
- * Scope-level row in the Secrets tree ("Repository (3)" / "production (2)").
- * Expands to SecretNode children; the provider uses `kind` on the underlying
- * SecretGroup.view to decide whether to render "loading…" vs the real list.
+ * Section node belonging to a specific environment — either "Secrets" or
+ * "Variables" under one env. The tree provider uses the `environment` +
+ * `section` pair to fetch/render the right scoped data.
  */
-export class SecretScopeGroupNode extends vscode.TreeItem {
-  readonly kind = "secret-scope-group" as const;
-  constructor(readonly group: SecretGroup) {
-    super(
-      group.label,
-      vscode.TreeItemCollapsibleState.Collapsed,
-    );
-    this.id = group.scope.kind === "repo" ? "secret-scope:repo" : `secret-scope:env:${group.scope.name}`;
-    if (group.view.kind === "secrets") {
-      this.description = `${group.view.items.length}`;
-    } else {
-      this.description = "loading…";
-    }
-    this.iconPath = new vscode.ThemeIcon(group.scope.kind === "repo" ? "repo" : "rocket");
-    this.contextValue = group.scope.kind === "repo" ? "secret-scope-repo" : "secret-scope-env";
+export class EnvironmentSubsectionNode extends vscode.TreeItem {
+  readonly kind = "environment-subsection" as const;
+  constructor(
+    readonly environment: Environment,
+    readonly section: "secrets" | "variables",
+    count?: number | "loading",
+  ) {
+    super(section === "secrets" ? "Secrets" : "Variables", vscode.TreeItemCollapsibleState.Collapsed);
+    this.id = `env-subsection:${environment.name}:${section}`;
+    if (count === "loading") this.description = "loading…";
+    else if (typeof count === "number") this.description = `${count}`;
+    this.iconPath = new vscode.ThemeIcon(section === "secrets" ? "lock" : "symbol-string");
+    this.contextValue = `env-subsection-${section}`;
   }
 }
+
+// --- secrets ---------------------------------------------------------------
 
 export class SecretNode extends vscode.TreeItem {
   readonly kind = "secret" as const;
