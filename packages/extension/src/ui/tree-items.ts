@@ -1,7 +1,9 @@
 import * as vscode from "vscode";
+import type { Secret, SecretScope } from "../core/domain/secrets.js";
 import type { Artifact, Job, RunConclusion, RunStatus, Step, Workflow, WorkflowRun } from "../core/domain/types.js";
 import { hasFailed } from "../core/domain/types.js";
 import type { ArtifactRunGroup } from "../core/selectors/artifacts.js";
+import type { SecretGroup } from "../core/selectors/secrets.js";
 import { durationBetween, formatDuration, formatRelative } from "../util/format.js";
 import { humanBytes } from "../services/artifact-service.js";
 
@@ -22,7 +24,9 @@ export type TreeNode =
   | StepNode
   | ArtifactsGroupNode
   | ArtifactsRunHeaderNode
-  | ArtifactNode;
+  | ArtifactNode
+  | SecretScopeGroupNode
+  | SecretNode;
 
 export class MessageNode extends vscode.TreeItem {
   readonly kind = "message" as const;
@@ -180,6 +184,58 @@ export class StepNode extends vscode.TreeItem {
     this.contextValue = `step${failSuffix(step)}`;
     this.command = { command: "workflowMonitor.viewJobLog", title: "View Job Log", arguments: [this] };
   }
+}
+
+// --- secrets ---------------------------------------------------------------
+
+/**
+ * Scope-level row in the Secrets tree ("Repository (3)" / "production (2)").
+ * Expands to SecretNode children; the provider uses `kind` on the underlying
+ * SecretGroup.view to decide whether to render "loading…" vs the real list.
+ */
+export class SecretScopeGroupNode extends vscode.TreeItem {
+  readonly kind = "secret-scope-group" as const;
+  constructor(readonly group: SecretGroup) {
+    super(
+      group.label,
+      vscode.TreeItemCollapsibleState.Collapsed,
+    );
+    this.id = group.scope.kind === "repo" ? "secret-scope:repo" : `secret-scope:env:${group.scope.name}`;
+    if (group.view.kind === "secrets") {
+      this.description = `${group.view.items.length}`;
+    } else {
+      this.description = "loading…";
+    }
+    this.iconPath = new vscode.ThemeIcon(group.scope.kind === "repo" ? "repo" : "rocket");
+    this.contextValue = group.scope.kind === "repo" ? "secret-scope-repo" : "secret-scope-env";
+  }
+}
+
+export class SecretNode extends vscode.TreeItem {
+  readonly kind = "secret" as const;
+  constructor(readonly scope: SecretScope, readonly secret: Secret) {
+    super(secret.name, vscode.TreeItemCollapsibleState.None);
+    this.id = `secret:${scopeIdPart(scope)}:${secret.name}`;
+    this.description = `updated ${formatRelative(secret.updatedAt)}`;
+    this.iconPath = new vscode.ThemeIcon("lock");
+    this.tooltip = new vscode.MarkdownString(
+      `**${secret.name}**\n\n`
+      + `- scope: ${scope.kind === "repo" ? "repository" : `environment \`${scope.name}\``}\n`
+      + `- created: ${formatRelative(secret.createdAt)}\n`
+      + `- updated: ${formatRelative(secret.updatedAt)}\n\n`
+      + `_GitHub never exposes secret values — the extension only sees metadata._`,
+    );
+    this.contextValue = "secret";
+    this.command = {
+      command: "workflowMonitor.copySecretName",
+      title: "Copy Secret Name",
+      arguments: [this],
+    };
+  }
+}
+
+function scopeIdPart(scope: SecretScope): string {
+  return scope.kind === "repo" ? "repo" : `env:${scope.name}`;
 }
 
 function iconForRun(run: WorkflowRun | null): vscode.ThemeIcon {

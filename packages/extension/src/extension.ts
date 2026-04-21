@@ -8,12 +8,14 @@ import { selectInProgressRunCount } from "./core/selectors/runs.js";
 import { LiveSync, type LiveSyncConfig } from "./services/live-sync.js";
 import { LogService } from "./services/log-service.js";
 import { NotificationService, type NotificationConfig } from "./services/notification-service.js";
+import { SecretSync } from "./services/secret-sync.js";
 import { ViewStateService } from "./services/view-state.js";
 import { WorkflowDefinitionService } from "./services/workflow-definitions.js";
 import { WorkflowStore } from "./services/workflow-store.js";
 import { ArtifactsTreeProvider } from "./ui/artifacts-tree-provider.js";
 import { registerCommands } from "./ui/commands.js";
 import { LogWebviewService } from "./ui/log-webview-panel.js";
+import { SecretsTreeProvider } from "./ui/secrets-tree-provider.js";
 import { StatusBar } from "./ui/status-bar.js";
 import { WorkflowsTreeProvider } from "./ui/tree-provider.js";
 import { createLogger } from "./util/logger.js";
@@ -50,10 +52,17 @@ export function activate(context: vscode.ExtensionContext): void {
   const definitions = new WorkflowDefinitionService(apiProvider);
   const diagnostics = new DiagnosticsService(logs, store, log);
   const notifications = new NotificationService(store, context.workspaceState, readNotificationConfig());
+  const secretSync = new SecretSync(apiProvider, store, log);
+
+  // Keep secretSync's repo pointer aligned with the live-sync one so it
+  // knows which repo to fetch for.
+  context.subscriptions.push(
+    store.onDidChange(() => secretSync.setRepo(store.snapshot().repo)),
+  );
 
   context.subscriptions.push(
     store, auth, repoWatcher, viewState, sync, coordinator,
-    logs, logPanels, definitions, diagnostics, notifications,
+    logs, logPanels, definitions, diagnostics, notifications, secretSync,
   );
 
   // --- UI ----------------------------------------------------------------
@@ -67,6 +76,11 @@ export function activate(context: vscode.ExtensionContext): void {
     treeDataProvider: artifactsTreeProvider,
     showCollapseAll: true,
   });
+  const secretsTreeProvider = new SecretsTreeProvider(store, secretSync);
+  const secretsTreeView = vscode.window.createTreeView("workflowMonitor.secrets", {
+    treeDataProvider: secretsTreeProvider,
+    showCollapseAll: true,
+  });
   const statusBar = new StatusBar(store, readStatusBarEnabled());
   const updateBadge = () => {
     const count = selectInProgressRunCount(store.snapshot());
@@ -77,18 +91,26 @@ export function activate(context: vscode.ExtensionContext): void {
   updateBadge();
   context.subscriptions.push(
     treeProvider, treeView, artifactsTreeProvider, artifactsTreeView, statusBar,
+    secretsTreeProvider, secretsTreeView,
     store.onDidChange(updateBadge),
     // Kick an immediate refresh when the user opens the sidebar — covers the
     // case where they return to the window after a long idle and want current
     // state without waiting for the idle timer.
     treeView.onDidChangeVisibility((e) => { if (e.visible) sync.refresh(); }),
     artifactsTreeView.onDidChangeVisibility((e) => { if (e.visible) sync.refresh(); }),
+    // Secrets don't polling-refresh. Fire once when the tree first appears,
+    // and re-fire on repo change (secretSync.setRepo clears state for us).
+    secretsTreeView.onDidChangeVisibility((e) => {
+      if (!e.visible) return;
+      secretsTreeProvider.resetLazyLoads();
+      void secretSync.refresh();
+    }),
   );
 
   // --- commands ----------------------------------------------------------
   context.subscriptions.push(registerCommands({
-    coordinator, auth, store, sync, logs, logPanels, artifacts, definitions,
-    diagnostics, notifications, viewState, log,
+    coordinator, auth, store, sync, secretSync, logs, logPanels, artifacts,
+    definitions, diagnostics, notifications, viewState, log,
   }));
 
   // --- reactive config + workspace tweaks --------------------------------

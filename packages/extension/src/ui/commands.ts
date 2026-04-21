@@ -8,6 +8,7 @@ import type { AuthService } from "../services/auth.js";
 import type { DiagnosticsService } from "../services/diagnostics-service.js";
 import type { LogService } from "../services/log-service.js";
 import type { NotificationService } from "../services/notification-service.js";
+import type { SecretSync } from "../services/secret-sync.js";
 import type { ViewStateService } from "../services/view-state.js";
 import type { WorkflowDefinitionService } from "../services/workflow-definitions.js";
 import type { WorkflowStore } from "../services/workflow-store.js";
@@ -15,7 +16,7 @@ import type { LiveSync } from "../services/live-sync.js";
 import type { Logger } from "../util/logger.js";
 import type { LogWebviewService } from "./log-webview-panel.js";
 import { promptDispatchInputs } from "./prompts.js";
-import { ArtifactNode, ArtifactsRunHeaderNode, JobNode, RunNode, StepNode, WorkflowNode } from "./tree-items.js";
+import { ArtifactNode, ArtifactsRunHeaderNode, JobNode, RunNode, SecretNode, StepNode, WorkflowNode } from "./tree-items.js";
 
 type Handler = (...args: unknown[]) => unknown | Promise<unknown>;
 
@@ -30,6 +31,7 @@ export interface CommandDeps {
   readonly auth: AuthService;
   readonly store: WorkflowStore;
   readonly sync: LiveSync;
+  readonly secretSync: SecretSync;
   readonly logs: LogService;
   readonly logPanels: LogWebviewService;
   readonly artifacts: ArtifactService;
@@ -55,6 +57,7 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable {
     ...dispatchCommands(deps),
     ...artifactCommands(deps),
     ...diagnosticsCommands(deps),
+    ...secretsCommands(deps),
   ];
   const subs = defs.map((d) => vscode.commands.registerCommand(d.id, d.handler));
   return vscode.Disposable.from(...subs);
@@ -246,6 +249,25 @@ function diagnosticsCommands(deps: CommandDeps): CommandDef[] {
     {
       id: "workflowMonitor.clearDiagnostics",
       handler: () => { deps.diagnostics.clear(); },
+    },
+  ];
+}
+
+// --- secrets ---------------------------------------------------------------
+
+function secretsCommands(deps: CommandDeps): CommandDef[] {
+  return [
+    {
+      id: "workflowMonitor.refreshSecrets",
+      handler: () => { void deps.secretSync.refresh(); },
+    },
+    {
+      id: "workflowMonitor.copySecretName",
+      handler: async (node: unknown) => {
+        if (!(node instanceof SecretNode)) return;
+        await vscode.env.clipboard.writeText(node.secret.name);
+        vscode.window.setStatusBarMessage(`Copied "${node.secret.name}" to clipboard`, 2000);
+      },
     },
   ];
 }

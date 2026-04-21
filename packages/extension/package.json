@@ -55,6 +55,12 @@
           "name": "Artifacts",
           "icon": "$(archive)",
           "contextualTitle": "GitHub Actions"
+        },
+        {
+          "id": "workflowMonitor.secrets",
+          "name": "Secrets",
+          "icon": "$(lock)",
+          "contextualTitle": "GitHub Actions"
         }
       ]
     },
@@ -66,6 +72,10 @@
       {
         "view": "workflowMonitor.artifacts",
         "contents": "No GitHub repository detected in this workspace.\n[Sign in to GitHub](command:workflowMonitor.signIn)"
+      },
+      {
+        "view": "workflowMonitor.secrets",
+        "contents": "No GitHub repository detected in this workspace.\n[Sign in to GitHub](command:workflowMonitor.signIn)\n\nSecret metadata (names, timestamps, scopes) is listed here. GitHub never returns values, so they cannot be displayed."
       }
     ],
     "commands": [
@@ -175,6 +185,18 @@
         "command": "workflowMonitor.copyFailureContextForJob",
         "title": "Copy Failure Context (by id)",
         "category": "Workflow Monitor"
+      },
+      {
+        "command": "workflowMonitor.refreshSecrets",
+        "title": "Refresh Secrets",
+        "category": "Workflow Monitor",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "workflowMonitor.copySecretName",
+        "title": "Copy Secret Name",
+        "category": "Workflow Monitor",
+        "icon": "$(copy)"
       }
     ],
     "menus": {
@@ -188,6 +210,11 @@
           "command": "workflowMonitor.refresh",
           "when": "view == workflowMonitor.workflows",
           "group": "navigation@2"
+        },
+        {
+          "command": "workflowMonitor.refreshSecrets",
+          "when": "view == workflowMonitor.secrets",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [
@@ -265,6 +292,16 @@
           "command": "workflowMonitor.copyFailureContext",
           "when": "view == workflowMonitor.workflows && viewItem =~ /^(job|step)-failed$/",
           "group": "2_logs@3"
+        },
+        {
+          "command": "workflowMonitor.copySecretName",
+          "when": "view == workflowMonitor.secrets && viewItem == secret",
+          "group": "inline@1"
+        },
+        {
+          "command": "workflowMonitor.copySecretName",
+          "when": "view == workflowMonitor.secrets && viewItem == secret",
+          "group": "1_actions@1"
         }
       ],
       "commandPalette": [
