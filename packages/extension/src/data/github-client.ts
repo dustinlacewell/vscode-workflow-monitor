@@ -12,7 +12,7 @@ import type {
   WorkflowRun,
 } from "../core/domain/types.js";
 import type { Logger } from "../util/logger.js";
-import type { GitHubApi, RateLimitSnapshot } from "./github-api.js";
+import type { GitHubApi, PublicKey, RateLimitSnapshot } from "./github-api.js";
 import { GitHubApiError } from "./github-api.js";
 
 export { GitHubApiError } from "./github-api.js";
@@ -211,6 +211,95 @@ export class GitHubClient implements GitHubApi {
       signal,
     );
     return data.secrets.map((s) => mapSecret(s, { kind: "environment", name: env }));
+  }
+
+  async getRepoPublicKey(repo: RepoCoordinates, signal?: AbortSignal): Promise<PublicKey> {
+    // Deliberately skip the ETag cache — public keys rotate and a stale
+    // `keyId` would silently produce undecryptable ciphertext on GitHub's side.
+    try {
+      const response = await this.octokit.request(
+        "GET /repos/{owner}/{repo}/actions/secrets/public-key",
+        {
+          owner: repo.owner,
+          repo: repo.repo,
+          ...(signal ? { request: { signal } } : {}),
+        },
+      );
+      this.captureRateLimit(response.headers);
+      return mapPublicKey(response.data);
+    } catch (err) {
+      if (isAbortError(err)) throw err;
+      throw this.wrap(err, "GET /repos/{owner}/{repo}/actions/secrets/public-key");
+    }
+  }
+
+  async getEnvironmentPublicKey(repo: RepoCoordinates, env: string, signal?: AbortSignal): Promise<PublicKey> {
+    try {
+      const response = await this.octokit.request(
+        "GET /repos/{owner}/{repo}/environments/{environment_name}/secrets/public-key",
+        {
+          owner: repo.owner,
+          repo: repo.repo,
+          environment_name: env,
+          ...(signal ? { request: { signal } } : {}),
+        },
+      );
+      this.captureRateLimit(response.headers);
+      return mapPublicKey(response.data);
+    } catch (err) {
+      if (isAbortError(err)) throw err;
+      throw this.wrap(err, "GET /repos/{owner}/{repo}/environments/{environment_name}/secrets/public-key");
+    }
+  }
+
+  async putRepoSecret(repo: RepoCoordinates, name: string, encryptedValue: string, keyId: string): Promise<void> {
+    await this.mutate("PUT /repos/{owner}/{repo}/actions/secrets/{secret_name}", {
+      owner: repo.owner,
+      repo: repo.repo,
+      secret_name: name,
+      encrypted_value: encryptedValue,
+      key_id: keyId,
+    });
+  }
+
+  async putEnvironmentSecret(
+    repo: RepoCoordinates,
+    env: string,
+    name: string,
+    encryptedValue: string,
+    keyId: string,
+  ): Promise<void> {
+    await this.mutate(
+      "PUT /repos/{owner}/{repo}/environments/{environment_name}/secrets/{secret_name}",
+      {
+        owner: repo.owner,
+        repo: repo.repo,
+        environment_name: env,
+        secret_name: name,
+        encrypted_value: encryptedValue,
+        key_id: keyId,
+      },
+    );
+  }
+
+  async deleteRepoSecret(repo: RepoCoordinates, name: string): Promise<void> {
+    await this.mutate("DELETE /repos/{owner}/{repo}/actions/secrets/{secret_name}", {
+      owner: repo.owner,
+      repo: repo.repo,
+      secret_name: name,
+    });
+  }
+
+  async deleteEnvironmentSecret(repo: RepoCoordinates, env: string, name: string): Promise<void> {
+    await this.mutate(
+      "DELETE /repos/{owner}/{repo}/environments/{environment_name}/secrets/{secret_name}",
+      {
+        owner: repo.owner,
+        repo: repo.repo,
+        environment_name: env,
+        secret_name: name,
+      },
+    );
   }
 
   private async conditionalGet<T>(
@@ -440,6 +529,15 @@ interface RawEnvironment {
   created_at: string;
   updated_at: string;
   protection_rules?: unknown[];
+}
+
+interface RawPublicKey {
+  key_id: string;
+  key: string;
+}
+
+function mapPublicKey(raw: RawPublicKey): PublicKey {
+  return { keyId: raw.key_id, key: raw.key };
 }
 
 function mapSecret(raw: RawSecret, scope: Secret["scope"]): Secret {

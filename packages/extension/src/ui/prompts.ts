@@ -79,3 +79,58 @@ async function promptString(input: DispatchInput, title: string, prompt: string 
   if (!input.required && value.trim().length === 0) return undefined;
   return value;
 }
+
+/**
+ * Ask for a new secret name with GitHub's validation rules applied live.
+ *
+ *   - must start with a letter or underscore
+ *   - alphanumeric + underscore only
+ *   - <= 245 chars
+ *   - may not begin with `GITHUB_` (reserved)
+ *
+ * Returns null if the user cancels.
+ */
+export async function promptSecretName(opts: { scopeLabel: string; taken: readonly string[] }): Promise<string | null> {
+  const takenSet = new Set(opts.taken);
+  const value = await vscode.window.showInputBox({
+    title: `New secret — ${opts.scopeLabel}`,
+    prompt: "Uppercase letters, digits, and underscores. Must start with a letter or underscore.",
+    placeHolder: "MY_SECRET_NAME",
+    ignoreFocusOut: true,
+    validateInput: (v) => validateSecretName(v, takenSet),
+  });
+  if (value === undefined) return null;
+  return value.trim();
+}
+
+function validateSecretName(raw: string, taken: ReadonlySet<string>): string | undefined {
+  const v = raw.trim();
+  if (v.length === 0) return "Name is required";
+  if (v.length > 245) return "Name must be 245 characters or fewer";
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) {
+    return "Use only letters, digits, and underscores; must start with a letter or underscore";
+  }
+  if (/^GITHUB_/i.test(v)) return "Names starting with GITHUB_ are reserved by GitHub";
+  if (taken.has(v)) return `A secret named "${v}" already exists in this scope`;
+  return undefined;
+}
+
+/**
+ * Prompt for a secret value. Password-masked input; paste-safe for multi-line
+ * content (newlines preserved verbatim; CRLF normalized downstream in
+ * encryptSecretValue). Returns null on cancel.
+ */
+export async function promptSecretValue(opts: {
+  title: string;
+  prompt?: string;
+}): Promise<string | null> {
+  const value = await vscode.window.showInputBox({
+    title: opts.title,
+    ...(opts.prompt ? { prompt: opts.prompt } : {}),
+    placeHolder: "Paste or type the secret value. Multi-line values are supported.",
+    password: true,
+    ignoreFocusOut: true,
+    validateInput: (v) => v.length === 0 ? "Value must not be empty" : undefined,
+  });
+  return value ?? null;
+}

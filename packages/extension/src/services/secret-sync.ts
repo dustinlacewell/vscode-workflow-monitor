@@ -2,6 +2,8 @@ import * as vscode from "vscode";
 import type { GitHubApi } from "../data/github-api.js";
 import { GitHubApiError } from "../data/github-api.js";
 import { classifyAuthFailure } from "../core/auth/failure.js";
+import { encryptSecretValue, ensureSodiumReady } from "../core/auth/encrypt.js";
+import type { SecretScope } from "../core/domain/secrets.js";
 import type { RepoCoordinates } from "../core/domain/types.js";
 import type { Logger } from "../util/logger.js";
 import { AuthService } from "./auth.js";
@@ -104,6 +106,59 @@ export class SecretSync implements vscode.Disposable {
       if (isAbort(err)) return;
       this.log.warn(`listEnvironmentSecrets(${envName}) failed`, err);
     }
+  }
+
+  /**
+   * Create or update a secret in the given scope. Handles the public-key
+   * fetch, seal-box encryption, PUT, and targeted refetch.
+   *
+   * Throws on failure (the command handler surfaces the message) rather than
+   * quietly swallowing — upstream #513's silent-save bug was the opposite
+   * choice, and the fix is to be loud about the PUT response.
+   */
+  async writeSecret(scope: SecretScope, name: string, value: string): Promise<void> {
+    const { api, repo } = this.requireContext();
+    await ensureSodiumReady();
+    const key = scope.kind === "repo"
+      ? await api.getRepoPublicKey(repo)
+      : await api.getEnvironmentPublicKey(repo, scope.name);
+    const ciphertext = encryptSecretValue(key.key, value);
+    if (scope.kind === "repo") {
+      await api.putRepoSecret(repo, name, ciphertext, key.keyId);
+    } else {
+      await api.putEnvironmentSecret(repo, scope.name, name, ciphertext, key.keyId);
+    }
+    await this.refreshScope(scope);
+  }
+
+  /** Delete a secret in the given scope. Refreshes the affected scope on success. */
+  async deleteSecret(scope: SecretScope, name: string): Promise<void> {
+    const { api, repo } = this.requireContext();
+    if (scope.kind === "repo") {
+      await api.deleteRepoSecret(repo, name);
+    } else {
+      await api.deleteEnvironmentSecret(repo, scope.name, name);
+    }
+    await this.refreshScope(scope);
+  }
+
+  private async refreshScope(scope: SecretScope): Promise<void> {
+    const { api, repo } = this.requireContext();
+    if (scope.kind === "repo") {
+      const secrets = await api.listRepoSecrets(repo);
+      this.store.setSecrets({ kind: "repo" }, secrets);
+      return;
+    }
+    const secrets = await api.listEnvironmentSecrets(repo, scope.name);
+    this.store.setSecrets({ kind: "environment", name: scope.name }, secrets);
+  }
+
+  private requireContext(): { api: GitHubApi; repo: RepoCoordinates } {
+    const api = this.apiProvider();
+    const repo = this.repo;
+    if (!api) throw new Error("Not signed in to GitHub");
+    if (!repo) throw new Error("No GitHub repository detected in this workspace");
+    return { api, repo };
   }
 
   /** Targeted reload for a single environment — used by post-write flows. */

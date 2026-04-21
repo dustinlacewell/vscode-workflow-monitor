@@ -15,8 +15,9 @@ import type { WorkflowStore } from "../services/workflow-store.js";
 import type { LiveSync } from "../services/live-sync.js";
 import type { Logger } from "../util/logger.js";
 import type { LogWebviewService } from "./log-webview-panel.js";
-import { promptDispatchInputs } from "./prompts.js";
-import { ArtifactNode, JobNode, RunNode, SecretNode, StepNode, WorkflowNode } from "./tree-items.js";
+import { promptDispatchInputs, promptSecretName, promptSecretValue } from "./prompts.js";
+import { ArtifactNode, EnvironmentNode, EnvironmentSubsectionNode, JobNode, RunNode, SecretNode, SettingsSectionNode, StepNode, WorkflowNode } from "./tree-items.js";
+import type { SecretScope } from "../core/domain/secrets.js";
 
 type Handler = (...args: unknown[]) => unknown | Promise<unknown>;
 
@@ -269,7 +270,93 @@ function secretsCommands(deps: CommandDeps): CommandDef[] {
         vscode.window.setStatusBarMessage(`Copied "${node.secret.name}" to clipboard`, 2000);
       },
     },
+    {
+      id: "workflowMonitor.addSecret",
+      handler: async (node: unknown) => {
+        const scope = scopeFromAddContext(node);
+        if (!scope) return;
+        const takenNames = collectTakenNames(deps, scope);
+        const name = await promptSecretName({ scopeLabel: scopeLabel(scope), taken: takenNames });
+        if (name === null) return;
+        const value = await promptSecretValue({
+          title: `New secret — ${scopeLabel(scope)} · ${name}`,
+          prompt: "The value is encrypted in your browser before leaving; GitHub never sees it in plaintext.",
+        });
+        if (value === null) return;
+        try {
+          await deps.secretSync.writeSecret(scope, name, value);
+          vscode.window.showInformationMessage(`Saved secret "${name}" to ${scopeLabel(scope)}.`);
+        } catch (err) {
+          vscode.window.showErrorMessage(`Failed to save secret: ${errMsg(err)}`);
+        }
+      },
+    },
+    {
+      id: "workflowMonitor.updateSecret",
+      handler: async (node: unknown) => {
+        if (!(node instanceof SecretNode)) return;
+        const value = await promptSecretValue({
+          title: `Update secret — ${scopeLabel(node.scope)} · ${node.secret.name}`,
+          prompt: "Enter the new value. The existing value is not shown — GitHub never returns secret values.",
+        });
+        if (value === null) return;
+        try {
+          await deps.secretSync.writeSecret(node.scope, node.secret.name, value);
+          vscode.window.showInformationMessage(`Updated "${node.secret.name}".`);
+        } catch (err) {
+          vscode.window.showErrorMessage(`Failed to update secret: ${errMsg(err)}`);
+        }
+      },
+    },
+    {
+      id: "workflowMonitor.deleteSecret",
+      handler: async (node: unknown) => {
+        if (!(node instanceof SecretNode)) return;
+        const confirm = await vscode.window.showWarningMessage(
+          `Delete secret "${node.secret.name}" from ${scopeLabel(node.scope)}? This cannot be undone.`,
+          { modal: true },
+          "Delete",
+        );
+        if (confirm !== "Delete") return;
+        try {
+          await deps.secretSync.deleteSecret(node.scope, node.secret.name);
+          vscode.window.showInformationMessage(`Deleted "${node.secret.name}".`);
+        } catch (err) {
+          vscode.window.showErrorMessage(`Failed to delete secret: ${errMsg(err)}`);
+        }
+      },
+    },
   ];
+}
+
+/**
+ * Map the node a user right-clicked (or hit an inline "+" on) to the scope
+ * we should write to. Accepts:
+ *   - top-level `Secrets` section → repo scope
+ *   - an environment row → env scope (add from the env header)
+ *   - an environment's `Secrets` subsection → env scope
+ */
+function scopeFromAddContext(node: unknown): SecretScope | null {
+  if (node instanceof SettingsSectionNode && node.section === "secrets") {
+    return { kind: "repo" };
+  }
+  if (node instanceof EnvironmentNode) {
+    return { kind: "environment", name: node.environment.name };
+  }
+  if (node instanceof EnvironmentSubsectionNode && node.section === "secrets") {
+    return { kind: "environment", name: node.environment.name };
+  }
+  return null;
+}
+
+function scopeLabel(scope: SecretScope): string {
+  return scope.kind === "repo" ? "repository" : `environment "${scope.name}"`;
+}
+
+function collectTakenNames(deps: CommandDeps, scope: SecretScope): readonly string[] {
+  const snap = deps.store.getSecretsSnapshot();
+  const key = scope.kind === "repo" ? "repo" : `env:${scope.name}`;
+  return snap.secretsByScope.get(key)?.map((s) => s.name) ?? [];
 }
 
 // --- view preferences ------------------------------------------------------

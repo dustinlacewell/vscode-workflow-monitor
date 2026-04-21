@@ -36,11 +36,30 @@ export interface GitHubApi {
   rerunFailedJobs(repo: RepoCoordinates, runId: number): Promise<void>;
   cancelRun(repo: RepoCoordinates, runId: number): Promise<void>;
 
-  // --- secrets (read only in v1) ------------------------------------------
+  // --- secrets ------------------------------------------------------------
 
   listRepoSecrets(repo: RepoCoordinates, signal?: AbortSignal): Promise<Secret[]>;
   listEnvironments(repo: RepoCoordinates, signal?: AbortSignal): Promise<Environment[]>;
   listEnvironmentSecrets(repo: RepoCoordinates, env: string, signal?: AbortSignal): Promise<Secret[]>;
+
+  getRepoPublicKey(repo: RepoCoordinates, signal?: AbortSignal): Promise<PublicKey>;
+  getEnvironmentPublicKey(repo: RepoCoordinates, env: string, signal?: AbortSignal): Promise<PublicKey>;
+
+  putRepoSecret(repo: RepoCoordinates, name: string, encryptedValue: string, keyId: string): Promise<void>;
+  putEnvironmentSecret(repo: RepoCoordinates, env: string, name: string, encryptedValue: string, keyId: string): Promise<void>;
+
+  deleteRepoSecret(repo: RepoCoordinates, name: string): Promise<void>;
+  deleteEnvironmentSecret(repo: RepoCoordinates, env: string, name: string): Promise<void>;
+}
+
+/**
+ * Public key + its stable identifier. The `keyId` must accompany every PUT so
+ * GitHub can pair our ciphertext with the right key for decryption on their
+ * side; rotating it would otherwise silently invalidate stored secrets.
+ */
+export interface PublicKey {
+  readonly keyId: string;
+  readonly key: string; // base64-encoded Curve25519 public key
 }
 
 export interface GitHubApiErrorDetail {
