@@ -8,11 +8,10 @@ import type { AuthService } from "../services/auth.js";
 import type { DiagnosticsService } from "../services/diagnostics-service.js";
 import type { LogService } from "../services/log-service.js";
 import type { NotificationService } from "../services/notification-service.js";
-import type { SecretSync } from "../services/secret-sync.js";
+import type { SyncEngine } from "../services/sync-engine.js";
 import type { ViewStateService } from "../services/view-state.js";
 import type { WorkflowDefinitionService } from "../services/workflow-definitions.js";
 import type { WorkflowStore } from "../services/workflow-store.js";
-import type { LiveSync } from "../services/live-sync.js";
 import type { Logger } from "../util/logger.js";
 import type { LogWebviewService } from "./log-webview-panel.js";
 import { promptDispatchInputs, promptSecretName, promptSecretValue, promptVariableName, promptVariableValue } from "./prompts.js";
@@ -31,8 +30,7 @@ export interface CommandDeps {
   readonly coordinator: AppCoordinator;
   readonly auth: AuthService;
   readonly store: WorkflowStore;
-  readonly sync: LiveSync;
-  readonly secretSync: SecretSync;
+  readonly engine: SyncEngine;
   readonly logs: LogService;
   readonly logPanels: LogWebviewService;
   readonly artifacts: ArtifactService;
@@ -126,18 +124,18 @@ function pickAuthFailure(v: unknown): AuthFailure | null {
 // --- run management --------------------------------------------------------
 
 function runCommands(deps: CommandDeps): CommandDef[] {
-  const { sync } = deps;
+  const { engine } = deps;
   return [
     {
       id: "workflowMonitor.refresh",
-      handler: () => sync.refresh(),
+      handler: () => engine.refreshPoll(),
     },
     {
       id: "workflowMonitor.rerunWorkflow",
       handler: (node: unknown) => guardRun(deps, node, async (api, repo, run) => {
         await api.rerunWorkflow(repo, run.id);
         vscode.window.showInformationMessage(`Re-running #${run.runNumber}…`);
-        sync.refresh();
+        engine.refreshPoll();
       }),
     },
     {
@@ -145,7 +143,7 @@ function runCommands(deps: CommandDeps): CommandDef[] {
       handler: (node: unknown) => guardRun(deps, node, async (api, repo, run) => {
         await api.rerunFailedJobs(repo, run.id);
         vscode.window.showInformationMessage(`Re-running failed jobs in #${run.runNumber}…`);
-        sync.refresh();
+        engine.refreshPoll();
       }),
     },
     {
@@ -160,7 +158,7 @@ function runCommands(deps: CommandDeps): CommandDef[] {
         if (confirm !== "Cancel run") return;
         await guardRun(deps, node, async (api, repo, run) => {
           await api.cancelRun(repo, run.id);
-          sync.refresh();
+          engine.refreshPoll();
         });
       },
     },
@@ -189,7 +187,7 @@ function dispatchCommands(deps: CommandDeps): CommandDef[] {
           if (!collected) return;
           await api.dispatchWorkflow(node.repo, node.workflow.id, collected.ref, collected.inputs);
           vscode.window.showInformationMessage(`Dispatched ${node.workflow.name} on ${collected.ref}.`);
-          deps.sync.refresh();
+          deps.engine.refreshPoll();
         } catch (err) {
           vscode.window.showErrorMessage(errMsg(err));
         }
@@ -255,7 +253,7 @@ function secretsCommands(deps: CommandDeps): CommandDef[] {
   return [
     {
       id: "workflowMonitor.refreshSecrets",
-      handler: () => { void deps.secretSync.refresh(); },
+      handler: () => { deps.engine.refreshView("settings"); },
     },
     {
       id: "workflowMonitor.copySecretName",
@@ -279,7 +277,7 @@ function secretsCommands(deps: CommandDeps): CommandDef[] {
         });
         if (value === null) return;
         try {
-          await deps.secretSync.writeSecret(target.repo, target.scope, name, value);
+          await deps.engine.writeSecret(target.repo, target.scope, name, value);
           vscode.window.showInformationMessage(`Saved secret "${name}" to ${scopeLabel(target.repo, target.scope)}.`);
         } catch (err) {
           vscode.window.showErrorMessage(`Failed to save secret: ${errMsg(err)}`);
@@ -296,7 +294,7 @@ function secretsCommands(deps: CommandDeps): CommandDef[] {
         });
         if (value === null) return;
         try {
-          await deps.secretSync.writeSecret(node.repo, node.scope, node.secret.name, value);
+          await deps.engine.writeSecret(node.repo, node.scope, node.secret.name, value);
           vscode.window.showInformationMessage(`Updated "${node.secret.name}".`);
         } catch (err) {
           vscode.window.showErrorMessage(`Failed to update secret: ${errMsg(err)}`);
@@ -314,7 +312,7 @@ function secretsCommands(deps: CommandDeps): CommandDef[] {
         );
         if (confirm !== "Delete") return;
         try {
-          await deps.secretSync.deleteSecret(node.repo, node.scope, node.secret.name);
+          await deps.engine.deleteSecret(node.repo, node.scope, node.secret.name);
           vscode.window.showInformationMessage(`Deleted "${node.secret.name}".`);
         } catch (err) {
           vscode.window.showErrorMessage(`Failed to delete secret: ${errMsg(err)}`);
@@ -349,7 +347,7 @@ function variablesCommands(deps: CommandDeps): CommandDef[] {
         });
         if (value === null) return;
         try {
-          await deps.secretSync.writeVariable(target.repo, target.scope, name, value, false);
+          await deps.engine.writeVariable(target.repo, target.scope, name, value, false);
           vscode.window.showInformationMessage(`Saved variable "${name}" to ${scopeLabel(target.repo, target.scope)}.`);
         } catch (err) {
           vscode.window.showErrorMessage(`Failed to save variable: ${errMsg(err)}`);
@@ -367,7 +365,7 @@ function variablesCommands(deps: CommandDeps): CommandDef[] {
         if (value === null) return;
         if (value === node.variable.value) return;
         try {
-          await deps.secretSync.writeVariable(node.repo, node.scope, node.variable.name, value, true);
+          await deps.engine.writeVariable(node.repo, node.scope, node.variable.name, value, true);
           vscode.window.showInformationMessage(`Updated "${node.variable.name}".`);
         } catch (err) {
           vscode.window.showErrorMessage(`Failed to update variable: ${errMsg(err)}`);
@@ -385,7 +383,7 @@ function variablesCommands(deps: CommandDeps): CommandDef[] {
         );
         if (confirm !== "Delete") return;
         try {
-          await deps.secretSync.deleteVariable(node.repo, node.scope, node.variable.name);
+          await deps.engine.deleteVariable(node.repo, node.scope, node.variable.name);
           vscode.window.showInformationMessage(`Deleted "${node.variable.name}".`);
         } catch (err) {
           vscode.window.showErrorMessage(`Failed to delete variable: ${errMsg(err)}`);

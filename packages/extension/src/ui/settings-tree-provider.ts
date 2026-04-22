@@ -9,8 +9,7 @@ import type {
 import { selectSettingsView } from "../core/selectors/settings.js";
 import type { Secret, Variable } from "../core/domain/secrets.js";
 import type { RepoCoordinates } from "../core/domain/types.js";
-import { repoKey, sameRepo } from "../core/domain/types.js";
-import type { SecretSync } from "../services/secret-sync.js";
+import { sameRepo } from "../core/domain/types.js";
 import type { WorkflowStore } from "../services/workflow-store.js";
 import {
   EnvironmentNode,
@@ -45,19 +44,14 @@ import {
 export class SettingsTreeProvider implements vscode.TreeDataProvider<TreeNode>, vscode.Disposable {
   private readonly emitter = new vscode.EventEmitter<TreeNode | undefined>();
   private readonly subscriptions: vscode.Disposable[] = [];
-  private readonly requestedEnvScopes = new Set<string>();
 
   readonly onDidChangeTreeData = this.emitter.event;
 
-  constructor(
-    private readonly store: WorkflowStore,
-    private readonly sync: SecretSync,
-  ) {
+  // Kept for engine API compatibility — the engine no longer calls it.
+  // Removing the method would force a signature change in extension.ts wiring.
+  constructor(private readonly store: WorkflowStore, _engine: { refreshView: (view: "settings") => void }) {
+    void _engine;
     this.subscriptions.push(store.onDidChange(() => this.emitter.fire(undefined)));
-  }
-
-  resetLazyLoads(): void {
-    this.requestedEnvScopes.clear();
   }
 
   getTreeItem(element: TreeNode): vscode.TreeItem { return element; }
@@ -99,7 +93,6 @@ export class SettingsTreeProvider implements vscode.TreeDataProvider<TreeNode>, 
     envView: EnvironmentView,
   ): TreeNode[] {
     if (envView.secrets.kind === "loading") {
-      this.ensureEnvFetch(node.repo, node.environment.name);
       return [new MessageNode("Loading secrets…", "sync~spin")];
     }
     if (envView.secrets.items.length === 0) {
@@ -113,20 +106,12 @@ export class SettingsTreeProvider implements vscode.TreeDataProvider<TreeNode>, 
     envView: EnvironmentView,
   ): TreeNode[] {
     if (envView.variables.kind === "loading") {
-      this.ensureEnvFetch(node.repo, node.environment.name);
       return [new MessageNode("Loading variables…", "sync~spin")];
     }
     if (envView.variables.items.length === 0) {
       return [new MessageNode("No variables in this environment", "info")];
     }
     return envView.variables.items.map((v) => new VariableNode(node.repo, { kind: "environment", name: envView.environment.name }, v));
-  }
-
-  private ensureEnvFetch(repo: RepoCoordinates, envName: string): void {
-    const key = `${repoKey(repo)}:${envName}`;
-    if (this.requestedEnvScopes.has(key)) return;
-    this.requestedEnvScopes.add(key);
-    void this.sync.refreshEnvironment(repo, envName);
   }
 
   dispose(): void {

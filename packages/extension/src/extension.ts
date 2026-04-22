@@ -5,10 +5,10 @@ import { ArtifactService } from "./services/artifact-service.js";
 import { AuthService } from "./services/auth.js";
 import { DiagnosticsService } from "./services/diagnostics-service.js";
 import { selectInProgressRunCount } from "./core/selectors/runs.js";
-import { LiveSync, type LiveSyncConfig } from "./services/live-sync.js";
+import type { FetcherDeps } from "./services/fetchers.js";
 import { LogService } from "./services/log-service.js";
 import { NotificationService, type NotificationConfig } from "./services/notification-service.js";
-import { SecretSync } from "./services/secret-sync.js";
+import { SyncEngine, type SyncEngineConfig } from "./services/sync-engine.js";
 import { ViewStateService } from "./services/view-state.js";
 import { WorkflowDefinitionService } from "./services/workflow-definitions.js";
 import { WorkflowStore } from "./services/workflow-store.js";
@@ -34,15 +34,21 @@ export function activate(context: vscode.ExtensionContext): void {
   const repoWatcher = new GitRepoWatcher(log);
   const viewState = new ViewStateService(context.workspaceState);
 
-  // `sync` needs the coordinator's API provider; the coordinator needs
-  // `sync` at construction. A late-bound holder breaks the cycle without
-  // leaking a mutable variable beyond this scope.
+  // The engine needs the coordinator's API provider; the coordinator needs
+  // the engine. A late-bound holder breaks the cycle without leaking a
+  // mutable variable beyond this scope.
   const apiHolder: { coord: AppCoordinator | null } = { coord: null };
   const apiProvider = () => apiHolder.coord?.api ?? null;
+  const engineConfig = readSyncConfig();
+  const engine = new SyncEngine(apiProvider, store, log, engineConfig);
 
-  const sync = new LiveSync(apiProvider, store, log, readSyncConfig());
-  const secretSync = new SecretSync(apiProvider, store, log);
-  const coordinator = new AppCoordinator(auth, repoWatcher, store, sync, secretSync, log);
+  const fetcherDeps: FetcherDeps = {
+    apiProvider,
+    store,
+    log,
+    runsPerWorkflow: () => engineConfig.runsPerWorkflow,
+  };
+  const coordinator = new AppCoordinator(auth, repoWatcher, store, engine, log, fetcherDeps);
   apiHolder.coord = coordinator;
 
   // --- higher-level feature services -------------------------------------
@@ -54,8 +60,8 @@ export function activate(context: vscode.ExtensionContext): void {
   const notifications = new NotificationService(store, context.workspaceState, readNotificationConfig());
 
   context.subscriptions.push(
-    store, auth, repoWatcher, viewState, sync, coordinator,
-    logs, logPanels, definitions, diagnostics, notifications, secretSync,
+    store, auth, repoWatcher, viewState, engine, coordinator,
+    logs, logPanels, definitions, diagnostics, notifications,
   );
 
   // --- UI ----------------------------------------------------------------
@@ -64,11 +70,26 @@ export function activate(context: vscode.ExtensionContext): void {
     treeDataProvider: treeProvider,
     showCollapseAll: true,
   });
-  const settingsTreeProvider = new SettingsTreeProvider(store, secretSync);
+  const settingsTreeProvider = new SettingsTreeProvider(store, engine);
   const settingsTreeView = vscode.window.createTreeView("workflowMonitor.settings", {
     treeDataProvider: settingsTreeProvider,
     showCollapseAll: true,
   });
+
+  // Hand both views to the engine so it can own all visibility-driven
+  // fetches. onDidChangeVisibility here goes away — the engine runs its
+  // own fetcher set when a view becomes visible.
+  engine.registerVisibilitySource({
+    id: "workflows",
+    visible: treeView.visible,
+    onDidChangeVisibility: treeView.onDidChangeVisibility,
+  });
+  engine.registerVisibilitySource({
+    id: "settings",
+    visible: settingsTreeView.visible,
+    onDidChangeVisibility: settingsTreeView.onDidChangeVisibility,
+  });
+
   const statusBar = new StatusBar(store, readStatusBarEnabled());
   const updateBadge = () => {
     const count = selectInProgressRunCount(store.snapshot());
@@ -80,22 +101,11 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     treeProvider, treeView, settingsTreeProvider, settingsTreeView, statusBar,
     store.onDidChange(updateBadge),
-    // Kick an immediate refresh when the user opens the sidebar — covers the
-    // case where they return to the window after a long idle and want current
-    // state without waiting for the idle timer.
-    treeView.onDidChangeVisibility((e) => { if (e.visible) sync.refresh(); }),
-    // Settings doesn't polling-refresh. Fire once when the tree first appears,
-    // and re-fire on repo change (secretSync.setRepo clears state for us).
-    settingsTreeView.onDidChangeVisibility((e) => {
-      if (!e.visible) return;
-      settingsTreeProvider.resetLazyLoads();
-      void secretSync.refresh();
-    }),
   );
 
   // --- commands ----------------------------------------------------------
   context.subscriptions.push(registerCommands({
-    coordinator, auth, store, sync, secretSync, logs, logPanels, artifacts,
+    coordinator, auth, store, engine, logs, logPanels, artifacts,
     definitions, diagnostics, notifications, viewState, log,
   }));
 
@@ -103,7 +113,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (!e.affectsConfiguration("workflowMonitor")) return;
-      sync.updateConfig(readSyncConfig());
+      engine.updateConfig(readSyncConfig());
       statusBar.setEnabled(readStatusBarEnabled());
       notifications.updateConfig(readNotificationConfig());
     }),
@@ -120,7 +130,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void { /* context.subscriptions owns teardown */ }
 
-function readSyncConfig(): LiveSyncConfig {
+function readSyncConfig(): SyncEngineConfig {
   const cfg = vscode.workspace.getConfiguration("workflowMonitor");
   return {
     activePollIntervalMs: cfg.get<number>("activePollIntervalMs", 2500),

@@ -38,6 +38,15 @@ export class WorkflowStore implements vscode.Disposable {
     lastUpdated: null,
   };
 
+  /**
+   * Emissions are coalesced to one per microtask so a burst of mutations
+   * inside a single sync cycle (e.g. setWorkflows + setRuns × N + setJobs × M)
+   * shows up as a single onDidChange event. Without this the tree re-renders
+   * N+M+1 times in quick succession and VS Code's "view is busy" underline
+   * flashes under the chevron.
+   */
+  private emitPending = false;
+
   readonly onDidChange = this.emitter.event;
 
   snapshot(): StoreSnapshot { return this.snap; }
@@ -230,7 +239,16 @@ export class WorkflowStore implements vscode.Disposable {
 
   private update(patch: Partial<StoreSnapshot>): void {
     this.snap = { ...this.snap, ...patch };
-    this.emitter.fire(this.snap);
+    this.scheduleEmit();
+  }
+
+  private scheduleEmit(): void {
+    if (this.emitPending) return;
+    this.emitPending = true;
+    queueMicrotask(() => {
+      this.emitPending = false;
+      this.emitter.fire(this.snap);
+    });
   }
 
   dispose(): void { this.emitter.dispose(); }
