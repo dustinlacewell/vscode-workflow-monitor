@@ -135,6 +135,7 @@ export class SyncEngine implements vscode.Disposable {
 
     // Register fetchers for any newly-tracked repos.
     const prevKeys = new Set(this.repos.map((r) => repoKey(r.coords)));
+    const hadNewRepo = repos.some((ctx) => !prevKeys.has(repoKey(ctx.coords)));
     for (const ctx of repos) {
       if (prevKeys.has(repoKey(ctx.coords))) continue;
       for (const f of this.registerFetchers(ctx)) this.fetchers.set(f.id, f);
@@ -142,11 +143,18 @@ export class SyncEngine implements vscode.Disposable {
 
     this.repos = repos;
 
-    // Re-fire visibility fetchers for views that are currently visible, so
-    // a newly-tracked repo immediately populates the view the user is looking
-    // at without waiting for them to toggle it.
-    for (const source of this.visibilityById.values()) {
-      if (source.visible) this.fireVisibility(source.id);
+    if (hadNewRepo) {
+      // Prefetch every visibility fetcher on repo resolution, regardless of
+      // whether the view is currently visible. This is the path that makes
+      // first-open of the sidebar feel instant — by the time the user
+      // clicks the tree, the data is already in the store.
+      //
+      // Cost: one ETag-cached fetch per resource per repo at boot. Benefit:
+      // no "Loading…" placeholders when the sidebar first opens. Same
+      // tradeoff upstream's extension makes.
+      for (const f of this.fetchers.values()) {
+        if (f.cadence.kind === "visibility") void this.runFetcher(f);
+      }
     }
 
     if (this.running) this.scheduleNext(0);

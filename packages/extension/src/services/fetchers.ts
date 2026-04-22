@@ -16,7 +16,6 @@ import type { WorkflowStore } from "./workflow-store.js";
 export function buildFetchersFor(ctx: RepoContext, deps: FetcherDeps): Fetcher[] {
   return [
     workflowsFetcher(ctx, deps),
-    artifactSweepFetcher(ctx, deps),
     repoSecretsFetcher(ctx, deps),
     repoVariablesFetcher(ctx, deps),
     environmentsFetcher(ctx, deps),
@@ -107,39 +106,28 @@ function workflowsFetcher(ctx: RepoContext, deps: FetcherDeps): Fetcher {
       }
       deps.store.pruneJobs(key, allRunIds);
       deps.store.pruneArtifacts(key, allRunIds);
-      deps.store.setRepoError(key, null);
-    },
-  };
-}
 
-/**
- * Bulk-fetches artifact metadata for every completed run in the repo that
- * doesn't have it cached yet. Fires once on Workflows-view visibility —
- * that's all it takes, since post-completion artifact lists don't change
- * and on-completion fetchers handle anything that finishes mid-session.
- */
-function artifactSweepFetcher(ctx: RepoContext, deps: FetcherDeps): Fetcher {
-  const key = repoKey(ctx.coords);
-  return {
-    id: `visibility:artifact-sweep:${key}`,
-    repoKey: key,
-    cadence: { kind: "visibility", view: "workflows" },
-    fetch: async (signal) => {
-      const api = deps.apiProvider();
-      if (!api) return;
+      // Bulk fetch artifact metadata for any completed run we haven't seen
+      // yet. Post-completion artifact lists don't change, so one fetch per
+      // run id is enough for the life of the session. This covers old runs
+      // existing at boot; runs that transition to completed mid-session go
+      // through the on-completion fetcher instead.
       const runIds = selectRepoRunsMissingArtifacts(deps.store.snapshot(), key);
-      if (runIds.length === 0) return;
-      await Promise.all(runIds.map(async (runId) => {
-        if (signal.aborted) return;
-        try {
-          const artifacts = await api.listArtifacts(ctx.coords, runId, signal);
+      if (runIds.length > 0) {
+        await Promise.all(runIds.map(async (runId) => {
           if (signal.aborted) return;
-          deps.store.setArtifacts(key, runId, artifacts);
-        } catch (err) {
-          if (signal.aborted) return;
-          deps.log.warn(`listArtifacts(${key}/${runId}) failed; skipping`, err);
-        }
-      }));
+          try {
+            const artifacts = await api.listArtifacts(ctx.coords, runId, signal);
+            if (signal.aborted) return;
+            deps.store.setArtifacts(key, runId, artifacts);
+          } catch (err) {
+            if (signal.aborted) return;
+            deps.log.warn(`listArtifacts(${key}/${runId}) failed; skipping`, err);
+          }
+        }));
+      }
+
+      deps.store.setRepoError(key, null);
     },
   };
 }

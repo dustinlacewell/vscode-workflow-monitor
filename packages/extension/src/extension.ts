@@ -81,12 +81,15 @@ export function activate(context: vscode.ExtensionContext): void {
   // own fetcher set when a view becomes visible.
   engine.registerVisibilitySource({
     id: "workflows",
-    visible: treeView.visible,
+    // Live getter — `treeView.visible` changes over time; capturing it at
+    // registration would leave us reading a stale boolean when setRepos
+    // asks whether to fire visibility fetchers post-repo-resolution.
+    get visible() { return treeView.visible; },
     onDidChangeVisibility: treeView.onDidChangeVisibility,
   });
   engine.registerVisibilitySource({
     id: "settings",
-    visible: settingsTreeView.visible,
+    get visible() { return settingsTreeView.visible; },
     onDidChangeVisibility: settingsTreeView.onDidChangeVisibility,
   });
 
