@@ -4,10 +4,9 @@ import type { StoreSnapshot } from "../store/snapshot.js";
 import { selectInProgressRunCount } from "./runs.js";
 
 export type PriorityReason =
-  | "action-required" // conclusion === "action_required" — needs a human
-  | "in-progress" // any active status
-  | "on-branch" // latest on the branch the active repo is on
-  | "latest"; // latest anywhere, fallback
+  | "in-progress" // latest run on-branch is actively running
+  | "on-branch" // latest completed run on a tracked repo's current branch
+  | "latest"; // fallback: latest run anywhere (no branch known)
 
 export interface PriorityBadge {
   readonly kind: "priority";
@@ -25,25 +24,28 @@ export type BadgeView =
   | PriorityBadge;
 
 /**
- * Pick what the status bar should show. Priority order across the whole
- * workspace (not per repo):
+ * Pick what the status bar should show.
  *
- *   1. action_required anywhere — pulses until dismissed
- *   2. any in-progress run — spinning icon
- *   3. latest run on the current branch (if exactly one branch resolves
- *      across repos, or if a repo's branch matches the featured run)
- *   4. latest run anywhere
+ * The rule is simpler than it used to be: surface the *latest* run on a
+ * tracked repo's current branch. Its status drives the visual (spinning
+ * for in-progress, warning pulse for action_required, error bg for
+ * failure, etc.), but it is always the latest-on-branch run — not the
+ * first action_required we can find across every run in every repo.
  *
- * We search repos in their tracked order (see GitRepoWatcher — active editor
- * wins the tiebreak), so if two repos both have in-progress runs the
- * "currently focused" one is the one that gets surfaced.
+ * That avoids the previous "forgotten Copilot PR on a fork branch hijacks
+ * the status bar forever" bug: action_required ranks as a visual on the
+ * right run, not as a reason to pick a different run.
+ *
+ * Order:
+ *   1. latest-on-branch, in-progress → spinning icon
+ *   2. latest-on-branch, completed   → success / failure / action_required
+ *   3. latest-anywhere                → only when no tracked repo has a
+ *                                        branch matching any of its runs
  */
 export function selectBadge(snap: StoreSnapshot): BadgeView {
   if (snap.status === "no-repo" || snap.status === "unauthenticated") return { kind: "hidden" };
   if (snap.repos.size === 0) return { kind: "hidden" };
 
-  // Flatten runs across repos, preserving order-of-tracking so the first
-  // match in a category comes from the "primary" repo.
   const flat: { run: WorkflowRun; repo: RepoCoordinates }[] = [];
   for (const per of snap.repos.values()) {
     for (const runs of per.runsByWorkflowId.values()) {
@@ -54,14 +56,11 @@ export function selectBadge(snap: StoreSnapshot): BadgeView {
 
   const inProgressCount = selectInProgressRunCount(snap);
 
-  const actionReq = flat.find((e) => e.run.conclusion === "action_required");
-  if (actionReq) return { kind: "priority", ...actionReq, reason: "action-required", inProgressCount };
-
-  const inProgress = flat.find((e) => isActiveStatus(e.run.status));
-  if (inProgress) return { kind: "priority", ...inProgress, reason: "in-progress", inProgressCount };
-
   const onBranch = latestOnAnyCurrentBranch(flat, snap);
-  if (onBranch) return { kind: "priority", ...onBranch, reason: "on-branch", inProgressCount };
+  if (onBranch) {
+    const reason: PriorityReason = isActiveStatus(onBranch.run.status) ? "in-progress" : "on-branch";
+    return { kind: "priority", ...onBranch, reason, inProgressCount };
+  }
 
   const latest = latestOverall(flat);
   if (latest) return { kind: "priority", ...latest, reason: "latest", inProgressCount };
@@ -72,9 +71,10 @@ function latestOnAnyCurrentBranch(
   flat: readonly { run: WorkflowRun; repo: RepoCoordinates }[],
   snap: StoreSnapshot,
 ): { run: WorkflowRun; repo: RepoCoordinates } | null {
-  // "On-branch" is per-repo: a run counts if it's on the branch of its own
-  // repo's checkout. Walk the flat list in order and pick the first match
-  // that's also the newest for its repo.
+  // Per repo: pick the newest run whose headBranch matches that repo's
+  // current checkout. Return the first such hit in tracking order so the
+  // "active editor" repo wins when multiple repos are on a branch with
+  // cached runs.
   const bestByRepo = new Map<string, { run: WorkflowRun; repo: RepoCoordinates }>();
   for (const entry of flat) {
     const per = snap.repos.get(repoKey(entry.repo));
@@ -84,7 +84,6 @@ function latestOnAnyCurrentBranch(
     const prev = bestByRepo.get(key);
     if (!prev || entry.run.id > prev.run.id) bestByRepo.set(key, entry);
   }
-  // Return the first repo (in tracking order) that had a match.
   for (const entry of flat) {
     const hit = bestByRepo.get(repoKey(entry.repo));
     if (hit) return hit;

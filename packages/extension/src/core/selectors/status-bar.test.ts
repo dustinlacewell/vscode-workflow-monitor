@@ -13,31 +13,24 @@ describe("selectBadge", () => {
     expect(v.kind).toBe("idle");
   });
 
-  it("prefers action_required over everything", () => {
-    const running = makeRun({ id: 1, workflowId: 1, status: "in_progress" });
-    const needs = makeRun({ id: 2, workflowId: 1, status: "completed", conclusion: "action_required" });
-    const snap = makeSnapshot({ runsByWorkflowId: new Map([[1, [running, needs]]]) });
+  it("picks the latest on-branch run and tags in-progress when it's active", () => {
+    const active = makeRun({ id: 5, workflowId: 1, status: "in_progress", headBranch: "main" });
+    const older = makeRun({ id: 3, workflowId: 1, status: "completed", conclusion: "success", headBranch: "main" });
+    const snap = makeSnapshot({ runsByWorkflowId: new Map([[1, [active, older]]]), branch: "main" });
     const v = selectBadge(snap);
     if (v.kind !== "priority") throw new Error("expected priority");
-    expect(v.run).toBe(needs);
-    expect(v.reason).toBe("action-required");
-  });
-
-  it("falls back to in-progress when no action required", () => {
-    const running = makeRun({ id: 1, workflowId: 1, status: "in_progress" });
-    const done = makeRun({ id: 2, workflowId: 1, status: "completed", conclusion: "success" });
-    const snap = makeSnapshot({ runsByWorkflowId: new Map([[1, [done, running]]]) });
-    const v = selectBadge(snap);
-    if (v.kind !== "priority") throw new Error("expected priority");
-    expect(v.run).toBe(running);
+    expect(v.run).toBe(active);
     expect(v.reason).toBe("in-progress");
   });
 
-  it("prefers a run on the current branch when nothing active", () => {
-    const onMain = makeRun({ id: 10, workflowId: 1, status: "completed", conclusion: "success", headBranch: "main" });
-    const onFeat = makeRun({ id: 11, workflowId: 1, status: "completed", conclusion: "success", headBranch: "feat" });
+  it("ignores action_required runs that aren't on the current branch", () => {
+    // The bug that prompted this rewrite: a stale action_required run on
+    // a fork branch was hijacking the status bar. It must not win over a
+    // fresh on-branch run.
+    const forkReview = makeRun({ id: 804, workflowId: 1, status: "completed", conclusion: "action_required", headBranch: "copilot/weird" });
+    const onMain = makeRun({ id: 100, workflowId: 1, status: "completed", conclusion: "success", headBranch: "main" });
     const snap = makeSnapshot({
-      runsByWorkflowId: new Map([[1, [onFeat, onMain]]]),
+      runsByWorkflowId: new Map([[1, [forkReview, onMain]]]),
       branch: "main",
     });
     const v = selectBadge(snap);
@@ -46,39 +39,41 @@ describe("selectBadge", () => {
     expect(v.reason).toBe("on-branch");
   });
 
-  it("takes the latest id on-branch, not first-seen", () => {
+  it("surfaces action_required only when it's the latest on-branch run", () => {
+    const needsApproval = makeRun({ id: 20, workflowId: 1, status: "completed", conclusion: "action_required", headBranch: "main" });
+    const earlier = makeRun({ id: 10, workflowId: 1, status: "completed", conclusion: "success", headBranch: "main" });
+    const snap = makeSnapshot({ runsByWorkflowId: new Map([[1, [needsApproval, earlier]]]), branch: "main" });
+    const v = selectBadge(snap);
+    if (v.kind !== "priority") throw new Error("expected priority");
+    expect(v.run).toBe(needsApproval);
+    expect(v.reason).toBe("on-branch");
+  });
+
+  it("picks the newest id on-branch, not the first-seen", () => {
     const older = makeRun({ id: 5, workflowId: 1, status: "completed", conclusion: "success", headBranch: "main" });
     const newer = makeRun({ id: 12, workflowId: 1, status: "completed", conclusion: "success", headBranch: "main" });
-    const snap = makeSnapshot({
-      runsByWorkflowId: new Map([[1, [older, newer]]]),
-      branch: "main",
-    });
+    const snap = makeSnapshot({ runsByWorkflowId: new Map([[1, [older, newer]]]), branch: "main" });
     const v = selectBadge(snap);
     if (v.kind !== "priority") throw new Error("expected priority");
     expect(v.run).toBe(newer);
   });
 
-  it("falls through to latest-anywhere when no branch or no match", () => {
+  it("falls through to latest-anywhere when no run matches the branch", () => {
     const other = makeRun({ id: 5, workflowId: 1, status: "completed", conclusion: "success", headBranch: "feat" });
-    const snap = makeSnapshot({
-      runsByWorkflowId: new Map([[1, [other]]]),
-      branch: "main",
-    });
+    const snap = makeSnapshot({ runsByWorkflowId: new Map([[1, [other]]]), branch: "main" });
     const v = selectBadge(snap);
     if (v.kind !== "priority") throw new Error("expected priority");
     expect(v.run).toBe(other);
     expect(v.reason).toBe("latest");
   });
 
-  it("includes the in-progress count even when priority is action-required", () => {
-    const running = makeRun({ id: 1, workflowId: 1, status: "in_progress" });
-    const running2 = makeRun({ id: 2, workflowId: 1, status: "queued" });
-    const needs = makeRun({ id: 3, workflowId: 1, status: "completed", conclusion: "action_required" });
-    const snap = makeSnapshot({ runsByWorkflowId: new Map([[1, [running, running2, needs]]]) });
+  it("still aggregates inProgressCount across all runs — badge can show +N", () => {
+    const onMain = makeRun({ id: 10, workflowId: 1, status: "in_progress", headBranch: "main" });
+    const onFeat = makeRun({ id: 11, workflowId: 1, status: "queued", headBranch: "feat" });
+    const snap = makeSnapshot({ runsByWorkflowId: new Map([[1, [onMain, onFeat]]]), branch: "main" });
     const v = selectBadge(snap);
     if (v.kind !== "priority") throw new Error("expected priority");
     expect(v.inProgressCount).toBe(2);
-    expect(v.reason).toBe("action-required");
   });
 });
 

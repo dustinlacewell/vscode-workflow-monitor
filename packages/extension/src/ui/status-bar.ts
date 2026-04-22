@@ -106,10 +106,10 @@ interface Visuals {
 }
 
 function visualsFor(view: PriorityBadge): Visuals {
-  const kind = view.reason === "action-required"
-    ? "action-required"
-    : classifyBadgeVisual(view.run.status, view.run.conclusion);
-  return VISUALS[kind];
+  // Visual is driven entirely by the run's own status/conclusion now —
+  // classifyBadgeVisual already maps conclusion === "action_required"
+  // to the pulsing warning. No separate "action-required" reason branch.
+  return VISUALS[classifyBadgeVisual(view.run.status, view.run.conclusion)];
 }
 
 const VISUALS: Record<BadgeVisualKind, Visuals> = {
@@ -160,9 +160,8 @@ function buildTooltip(view: PriorityBadge, visuals: Visuals): vscode.MarkdownStr
 
 function reasonLabel(reason: PriorityReason): string {
   switch (reason) {
-    case "action-required": return "run is awaiting manual approval";
-    case "in-progress":     return "run is actively running";
-    case "on-branch":       return "latest run on the current branch";
-    case "latest":          return "latest run in the repository";
+    case "in-progress": return "latest run on the current branch (in progress)";
+    case "on-branch":   return "latest run on the current branch";
+    case "latest":      return "latest run in the repository";
   }
 }
