@@ -2,7 +2,7 @@
   "name": "vscode-workflow-monitor",
   "displayName": "Workflow Monitor",
   "description": "Live sidebar view into your project's GitHub Actions workflows, runs, jobs, and logs.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "ldlework",
   "license": "MIT",
   "icon": "icon.png",

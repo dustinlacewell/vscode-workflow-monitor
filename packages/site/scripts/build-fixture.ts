@@ -10,7 +10,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { RunConclusion, RunStatus, Step } from "../../extension/src/domain/types.js";
+import type { RunConclusion, RunStatus, Step } from "../../extension/src/core/domain/types.js";
 import { stripTimestamps } from "../../extension/src/util/ansi.js";
 import { parseLog } from "../../extension/src/util/log-parser.js";
 import { enrichSections } from "../../extension/src/util/log-sections.js";
