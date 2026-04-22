@@ -312,8 +312,13 @@ export class SyncEngine implements vscode.Disposable {
 
   private handleError(f: Fetcher, err: unknown): void {
     if (err instanceof GitHubApiError) {
-      // Auth issues are token-wide, not per-fetcher.
-      if (err.status === 401 || err.status === 403) {
+      // 401 means the token itself is rejected — that's token-wide and
+      // stops everything. 403 almost always means "this token can't
+      // access this specific endpoint" (scope limitation, org SSO, no
+      // admin on this repo, etc.) which is per-fetcher: the Workflows
+      // path can keep working while secrets/variables report their own
+      // error.
+      if (err.status === 401) {
         const failure = classifyAuthFailure({
           status: err.status,
           message: err.message,
@@ -326,6 +331,15 @@ export class SyncEngine implements vscode.Disposable {
         this.store.setStatus("unauthenticated", err.message);
         this.log.warn(`Auth rejected by GitHub (${f.id}); pausing loop.`);
         this.stop();
+        return;
+      }
+      if (err.status === 403) {
+        // Settings fetchers set their own per-sub-section status
+        // separately; for now we mark the repo as having a contained
+        // error so the tree can show "Error: 403 …" on the specific
+        // section rather than the whole workflows banner.
+        this.store.setSecretsStatus(f.repoKey, "error", `${err.status} ${err.message}`);
+        this.log.warn(`Fetcher ${f.id} 403: ${err.message}`);
         return;
       }
       if (err.status === 404) {
